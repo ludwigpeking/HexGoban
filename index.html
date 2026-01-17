@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hexagonal Goban Editor</title>
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.2/lib/p5.min.js"></script>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main id="app">
+    <div id="ui">
+      <h1>Hex Goban</h1>
+      <div class="row">Mode: <span id="mode">move-vertex</span></div>
+      <div class="row">Hover: <span id="hover">none</span></div>
+      <div class="row">Triangles: <span id="triCount">0</span> · Quads: <span id="quadCount">0</span></div>
+      <div class="row">Controls: [v/V] move vertex · [e/E] delete edge · [s/S] select · Drag to move · Click midpoint to delete</div>
+    </div>
+  </main>
+  <script src="sketch.js"></script>
+</body>
+</html>
