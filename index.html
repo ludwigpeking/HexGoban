@@ -13,7 +13,7 @@
       <h1>Hex Goban</h1>
       <div class="row">Mode: <span id="mode">move-vertex</span></div>
       <div class="row">Hover: <span id="hover">none</span></div>
-      <div class="row">Triangles: <span id="triCount">0</span> · Quads: <span id="quadCount">0</span></div>
+      <div class="row">Vertices: <span id="vertexCount">0</span> · Triangles: <span id="triCount">0</span> · Quads: <span id="quadCount">0</span></div>
       <div class="row">
         <button id="undoBtn">Undo [Ctrl+Z]</button>
         <button id="redoBtn">Redo [Ctrl+Shift+Z]</button>
@@ -27,7 +27,16 @@
         <button id="relaxBtn">Relax [r/R]</button>
         <span id="relaxStatus"></span>
       </div>
-      <div class="row">Controls: [v/V] move vertex · [e/E] delete edge · [s/S] select · Drag to move · Click midpoint to delete</div>
+      <div class="row">
+        <button id="saveBtn">Save Goban</button>
+        <button id="loadBtn">Load Goban</button>
+        <span id="saveLoadStatus"></span>
+      </div>
+      <div class="row">
+        <button id="playBtn">Play Go [p/P]</button>
+        <span id="gameInfo"></span>
+      </div>
+      <div class="row">Controls: [v/V] move vertex · [e/E] delete edge · [s/S] select · [p/P] play Go · Drag to move · Click midpoint to delete</div>
     </div>
   </main>
   <script src="sketch.js"></script>

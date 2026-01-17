@@ -2,7 +2,7 @@
 // Modes: move-vertex (default), delete-edge, select (view only)
 
 const spacing = 50;
-const hexRadius = 8; // yields 9 vertices per edge
+const hexRadius = 10; // yields 9 vertices per edge
 const canvasW = 1920;
 const canvasH = 1080;
 const sqrt3 = Math.sqrt(3);
@@ -19,6 +19,12 @@ let hoverEdge = null;
 let dragging = null;
 let mode = 'move-vertex';
 
+// Go game state
+let gameStones = new Map(); // vid -> 'black' or 'white'
+let currentPlayer = 'black'; // whose turn
+let capturedBlack = 0;
+let capturedWhite = 0;
+
 let relaxing = false;
 let relaxFrame = 0;
 let relaxMaxFrames = 20;
@@ -32,6 +38,12 @@ let autoRemoveMaxIterations = 1000;
 let autoRemoveRetries = 0;
 let autoRemoveMaxRetries = 50;
 let autoRemoveStartSnapshot = null;
+let saveLoadStatusEl = null;
+
+function preload() {
+  whi = loadImage('images/whitehole.png');
+  bhi = loadImage('images/blackhole.png');
+}
 
 // Undo/Redo stack
 let undoStack = [];
@@ -46,8 +58,6 @@ function setup() {
   const c = createCanvas(canvasW, canvasH);
   c.parent('app');
   noLoop();
-  whi = createImage(1, 1); // placeholder; load actual images if needed
-  bhi = createImage(1, 1);
   buildGrid();
   captureState('initial');
   updateUiCounts();
@@ -69,6 +79,18 @@ function setup() {
   if (autoRemoveBtn) {
     autoRemoveBtn.addEventListener('click', startAutoRemoveEdges);
   }
+
+  saveLoadStatusEl = document.getElementById('saveLoadStatus');
+
+  // Wire up save/load buttons
+  const saveBtn = document.getElementById('saveBtn');
+  const loadBtn = document.getElementById('loadBtn');
+  if (saveBtn) saveBtn.addEventListener('click', saveGoban);
+  if (loadBtn) loadBtn.addEventListener('click', loadGoban);
+  
+  // Wire up play mode button
+  const playBtn = document.getElementById('playBtn');
+  if (playBtn) playBtn.addEventListener('click', togglePlayMode);
   
   updateUndoUI();
 }
@@ -78,12 +100,13 @@ function windowResized() {
 }
 
 function draw() {
-  background(15, 17, 23);
+  background(120, 100, 70);
   drawSectors();
   drawFaces();
   drawEdges();
   drawVertices();
   drawSymbols();
+  if (mode === 'play') drawStones();
   
   if (relaxing) {
     relaxFrame++;
@@ -158,7 +181,12 @@ function buildGrid() {
       const s = -q - r;
       if (Math.max(Math.abs(q), Math.abs(r), Math.abs(s)) > hexRadius) continue;
       const pos = axialToPixel(q, r);
-      const type = (q === 0 && r === 0) ? 'center' : (Math.max(Math.abs(q), Math.abs(r), Math.abs(s)) === hexRadius ? 'edge' : 'inner');
+      let type;
+      if (Math.max(Math.abs(q), Math.abs(r), Math.abs(s)) === hexRadius) {
+        type = 'edge';
+      } else {
+        type = 'inner';
+      }
       vertices.push({
         id: vid,
         q, r,
@@ -284,6 +312,11 @@ function mousePressed() {
     redraw();
     return;
   }
+  if (mode === 'play' && hoverVertex !== null) {
+    placeStone(hoverVertex);
+    redraw();
+    return;
+  }
   if (mode === 'move-vertex' && hoverVertex !== null) {
     const v = vertices[hoverVertex];
     if (v.type === 'edge' || v.type === 'center') return;
@@ -310,6 +343,7 @@ function keyPressed() {
   if (key === 'v' || key === 'V') mode = 'move-vertex';
   if (key === 'e' || key === 'E') mode = 'delete-edge';
   if (key === 's' || key === 'S') mode = 'select';
+  if (key === 'p' || key === 'P') togglePlayMode();
   if (key === 'r' || key === 'R') startRelaxation();
   if ((key === 'z' || key === 'Z') && keyIsDown(CONTROL)) {
     if (keyIsDown(SHIFT)) redoStep();
@@ -451,29 +485,21 @@ function orderPolygon(ids) {
 
 // ---- Rendering ----
 function drawSectors() {
-  stroke(50, 70, 110, 120);
-  strokeWeight(1);
-  const cx = canvasW / 2;
-  const cy = canvasH / 2;
-  for (let i = 0; i < 3; i++) {
-    const ang = -90 + i * 120;
-    const dir = rotateVec(0, -1, ang);
-    line(cx, cy, cx + dir.x * 1200, cy + dir.y * 1200);
-  }
+  // Sector lines removed - they're not needed for the goban
 }
 
 function drawFaces() {
   noStroke();
-  // Quads
-  fill(52, 125, 177, 120);
+  // Quads - no fill, just part of the goban
+  noFill();
   for (const q of quads) {
     if (!q.active) continue;
     beginShape();
     q.verts.forEach((vid) => vertex(vertices[vid].x, vertices[vid].y));
     endShape(CLOSE);
   }
-  // Triangles
-  fill(114, 184, 97, 120);
+  // Triangles - no fill, just part of the goban
+  noFill();
   for (const t of triangles) {
     if (!t.active) continue;
     beginShape();
@@ -483,7 +509,7 @@ function drawFaces() {
 }
 
 function drawEdges() {
-  strokeWeight(2);
+  strokeWeight(0.8);
   for (const e of edges) {
     if (!e.active) continue;
     const tris = edgeTris.get(edgeKey(e.a, e.b)) || [];
@@ -495,7 +521,7 @@ function drawEdges() {
     } else if (mode === 'delete-edge' && deletable) {
       stroke(180, 140, 90, 220);
     } else {
-      stroke(200, 210, 230, 180);
+      stroke(80, 80, 80, 180);
     }
     const a = vertices[e.a];
     const b = vertices[e.b];
@@ -512,14 +538,23 @@ function drawVertices() {
   noStroke();
   for (const v of vertices) {
     if (v.visible === false) continue; // hide unused vertices
+    // Show only center vertex and edge vertices, not normal inner vertices
+    if (v.type === 'inner' && !(v.q === 0 && v.r === 0)) continue;
     let c;
-    if (v.type === 'center') c = color(255, 105, 140);
-    else if (v.type === 'edge') c = color(120, 190, 255);
-    else c = color(240);
+    if (v.type === 'edge') c = color(120, 190, 255);
+    else if (v.q === 0 && v.r === 0) {
+      // Center vertex - color by edge count
+      const edgeCount = v.neighbors.size;
+      if (edgeCount === 6 || edgeCount === 5) c = color(255, 255, 255); // white
+      else if (edgeCount === 3) c = color(0, 0, 0); // black
+      else c = color(150, 150, 150); // default grey
+    } else {
+      continue; // skip other inner vertices
+    }
     const isHover = hoverVertex === v.id;
     if (isHover) c = color(255, 230, 120);
     fill(c);
-    circle(v.x, v.y, v.type === 'center' ? 12 : 7);
+    circle(v.x, v.y, 7);
   }
 }
 
@@ -527,6 +562,7 @@ function drawVertices() {
 function updateUiMode() {
   const el = document.getElementById('mode');
   if (el) el.textContent = mode;
+  updateGameUI();
 }
 
 function updateUiHover() {
@@ -534,7 +570,13 @@ function updateUiHover() {
   if (!el) return;
   if (hoverVertex !== null) {
     const v = vertices[hoverVertex];
-    el.textContent = `vertex ${v.id} (${v.type})`;
+    if (mode === 'play' && gameStones.has(hoverVertex)) {
+      const color = gameStones.get(hoverVertex);
+      const liberties = getGroupLiberties(hoverVertex);
+      el.textContent = `${color} stone at ${v.id} | liberties: ${liberties}${liberties === 1 ? ' (ATARI!)' : ''}`;
+    } else {
+      el.textContent = `vertex ${v.id} (${v.type})`;
+    }
   } else if (hoverEdge !== null) {
     const e = edges[hoverEdge];
     el.textContent = `edge ${e.a}-${e.b}`;
@@ -546,10 +588,13 @@ function updateUiHover() {
 function updateUiCounts() {
   const triCount = triangles.filter((t) => t.active).length;
   const quadCount = quads.filter((q) => q.active).length;
+  const vertexCount = vertices.filter((v) => v.visible !== false).length;
   const tEl = document.getElementById('triCount');
   const qEl = document.getElementById('quadCount');
+  const vEl = document.getElementById('vertexCount');
   if (tEl) tEl.textContent = triCount;
   if (qEl) qEl.textContent = quadCount;
+  if (vEl) vEl.textContent = vertexCount;
 }
 
 // ---- Relaxation algorithm ----
@@ -600,7 +645,7 @@ function relaxVertices(iterations) {
     // Relax ALL vertices based on their own adjacent face centroids
     const adjustments = new Map();
     for (const v of vertices) {
-      if (v.type === 'edge' || v.type === 'center') continue;
+      if (v.type === 'edge') continue;
 
       const faces = adjFaces.get(v.id) || [];
       if (faces.length === 0) continue;
@@ -707,24 +752,188 @@ function drawSymbols() {
     if (v.type !== 'inner') continue; // Only on inner vertices
     const edgeCount = v.neighbors.size;
 
-    if (edgeCount === 6) {
+    if (edgeCount === 6 || edgeCount === 5) {
       // White hole
-      fill(255);
-      stroke(200);
-      strokeWeight(2);
-      circle(v.x, v.y, 12);
-    } else if (edgeCount === 5) {
-      // Star (white circle for now)
-      fill(255);
-      noStroke();
-      circle(v.x, v.y, 10);
+      if (whi) {
+        push();
+        imageMode(CENTER);
+        image(whi, v.x, v.y, edgeCount*4, edgeCount*4);
+        pop();
+      } else {
+        fill(255);
+        stroke(200);
+        strokeWeight(2);
+        circle(v.x, v.y, 12);
+      }
     } else if (edgeCount === 3) {
       // Black hole
-      fill(20);
-      stroke(100);
-      strokeWeight(2);
-      circle(v.x, v.y, 12);
+      if (bhi) {
+        push();
+        imageMode(CENTER);
+        image(bhi, v.x, v.y, edgeCount*4, edgeCount*4);
+        pop();
+      } else {
+        fill(20);
+        stroke(100);
+        strokeWeight(2);
+        circle(v.x, v.y, 12);
+      }
     }
+  }
+}
+
+// ---- Go Game Mode ----
+function togglePlayMode() {
+  if (mode === 'play') {
+    mode = 'move-vertex';
+  } else {
+    mode = 'play';
+    gameStones.clear();
+    currentPlayer = 'black';
+    capturedBlack = 0;
+    capturedWhite = 0;
+  }
+  updateUiMode();
+  updateGameUI();
+  redraw();
+}
+
+function drawStones() {
+  for (const [vid, color] of gameStones) {
+    const v = vertices[vid];
+    if (!v || v.visible === false) continue;
+    
+    const liberties = getGroupLiberties(vid);
+    const isAtari = liberties === 1;
+    
+    // Draw atari warning ring
+    if (isAtari) {
+      noFill();
+      stroke(255, 80, 80);
+      strokeWeight(3);
+      circle(v.x, v.y, 38);
+    }
+    
+    // Draw stone
+    noStroke();
+    if (color === 'black') {
+      fill(20, 20, 25);
+      circle(v.x, v.y, spacing*0.65);
+      // Shine effect
+      fill(80, 80, 90, 120);
+      circle(v.x - 4, v.y - 4, spacing*0.25);
+    } else {
+      fill(250, 250, 245);
+      circle(v.x, v.y, spacing*0.65);
+      // Shadow effect
+      fill(200, 200, 195, 80);
+      circle(v.x + 3, v.y + 3, spacing*0.25);
+    }
+    
+    // Show liberties (chi) on hover
+    if (hoverVertex === vid) {
+      fill(255, 200, 80);
+      noStroke();
+      textAlign(CENTER, CENTER);
+      textSize(12);
+      text(liberties, v.x, v.y - 20);
+    }
+  }
+}
+
+function placeStone(vid) {
+  // Can't place on occupied vertex
+  if (gameStones.has(vid)) return;
+  
+  // Can't place on invisible vertices
+  const v = vertices[vid];
+  if (v.visible === false) return;
+  
+  // Place the stone
+  gameStones.set(vid, currentPlayer);
+  
+  // Check for captures of opponent groups
+  const opponent = currentPlayer === 'black' ? 'white' : 'black';
+  const neighbors = Array.from(v.neighbors);
+  
+  for (const nid of neighbors) {
+    if (gameStones.get(nid) === opponent) {
+      const liberties = getGroupLiberties(nid);
+      if (liberties === 0) {
+        // Capture this group
+        const group = getGroup(nid);
+        for (const gvid of group) {
+          gameStones.delete(gvid);
+          if (opponent === 'black') capturedBlack++;
+          else capturedWhite++;
+        }
+      }
+    }
+  }
+  
+  // Check if our own move is suicide (no liberties and didn't capture anything)
+  const ourLiberties = getGroupLiberties(vid);
+  if (ourLiberties === 0) {
+    // Suicide move - not allowed, revert
+    gameStones.delete(vid);
+    alert('Suicide move not allowed!');
+    return;
+  }
+  
+  // Switch player
+  currentPlayer = opponent;
+  updateGameUI();
+}
+
+function getGroup(vid) {
+  // BFS to find all connected stones of same color
+  const color = gameStones.get(vid);
+  if (!color) return new Set();
+  
+  const group = new Set([vid]);
+  const queue = [vid];
+  
+  while (queue.length > 0) {
+    const curr = queue.shift();
+    const v = vertices[curr];
+    
+    for (const nid of v.neighbors) {
+      if (gameStones.get(nid) === color && !group.has(nid)) {
+        group.add(nid);
+        queue.push(nid);
+      }
+    }
+  }
+  
+  return group;
+}
+
+function getGroupLiberties(vid) {
+  // Get the group
+  const group = getGroup(vid);
+  const liberties = new Set();
+  
+  // Check all empty neighbors of all stones in the group
+  for (const gvid of group) {
+    const v = vertices[gvid];
+    for (const nid of v.neighbors) {
+      if (!gameStones.has(nid) && vertices[nid].visible !== false) {
+        liberties.add(nid);
+      }
+    }
+  }
+  
+  return liberties.size;
+}
+
+function updateGameUI() {
+  const gameInfoEl = document.getElementById('gameInfo');
+  if (!gameInfoEl) return;
+  
+  if (mode === 'play') {
+    gameInfoEl.textContent = `Turn: ${currentPlayer.toUpperCase()} | Captured: Black ${capturedBlack}, White ${capturedWhite}`;
+  } else {
+    gameInfoEl.textContent = '';
   }
 }
 
@@ -831,6 +1040,91 @@ function markVisibleVertices() {
   vertices.forEach((v, idx) => {
     v.visible = used.has(idx);
   });
+}
+
+// ---- Save/Load Goban ----
+function saveGoban() {
+  const data = {
+    version: 1,
+    hexRadius,
+    spacing,
+    vertices: vertices.map((v) => ({
+      id: v.id,
+      x: v.x,
+      y: v.y,
+      type: v.type,
+      q: v.q ?? 0,
+      r: v.r ?? 0,
+      peers: v.peers ?? [v.id, v.id, v.id],
+    })),
+    quads: quads.filter((q) => q.active).map((q) => ({ verts: [...q.verts] })),
+  };
+
+  const fname = `goban_${Date.now()}.json`;
+  saveJSON(data, fname);
+  if (saveLoadStatusEl) saveLoadStatusEl.textContent = `Saved ${fname}`;
+}
+
+function loadGoban() {
+  const picker = createFileInput(handleFile, false);
+  picker.elt.accept = 'application/json';
+  picker.elt.click();
+
+  function handleFile(file) {
+    if (file?.type === 'application' && file.subtype === 'json') {
+      const data = file.data || file.string;
+      try {
+        const json = typeof data === 'string' ? JSON.parse(data) : data;
+        restoreGoban(json);
+        if (saveLoadStatusEl) saveLoadStatusEl.textContent = 'Loaded goban';
+      } catch (e) {
+        console.error('Failed to load goban', e);
+        if (saveLoadStatusEl) saveLoadStatusEl.textContent = 'Load failed';
+      }
+    }
+    picker.remove();
+  }
+}
+
+function restoreGoban(data) {
+  // Reset structures
+  vertices = [];
+  edges = [];
+  edgeByKey.clear();
+  edgeTris.clear();
+  triangles = [];
+  quads = [];
+
+  // Restore vertices
+  data.vertices.forEach((v) => {
+    vertices.push({
+      id: v.id,
+      x: v.x,
+      y: v.y,
+      type: v.type,
+      q: v.q ?? 0,
+      r: v.r ?? 0,
+      neighbors: new Set(),
+      triangles: new Set(),
+      quads: new Set(),
+      peers: v.peers ?? [v.id, v.id, v.id],
+      visible: true,
+    });
+  });
+
+  // Restore quads
+  if (Array.isArray(data.quads)) {
+    data.quads.forEach((q, idx) => {
+      quads.push({ id: idx, verts: [...q.verts], active: true });
+    });
+  }
+
+  // Rebuild edges and mark visibility
+  rebuildEdgesFromFaces();
+  markVisibleVertices();
+  updateUiCounts();
+  redraw();
+  captureState('load');
 }
 
 function deactivateFacesOutsideRadius(maxRadius) {

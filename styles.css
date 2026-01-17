@@ -1,5 +1,5 @@
 * { box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
-html, body { margin: 0; padding: 0; background: #0f1117; color: #e8ecf0; }
+html, body { margin: 0; padding: 0; background: #f5f5dc; color: #333; }
 body { display: flex; justify-content: center; align-items: flex-start; }
 main { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
 canvas { display: block; }
@@ -7,11 +7,12 @@ canvas { display: block; }
   position: absolute;
   top: 12px;
   left: 12px;
-  background: rgba(12, 14, 20, 0.78);
-  border: 1px solid #1f2430;
+  max-width: 350px;
+  background: rgba(245, 245, 220, 0.1);
+  border: 1px solid rgba(100, 100, 100, 0.3);
   border-radius: 8px;
   padding: 10px 12px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  box-shadow: none;
   z-index: 2;
 }
 #ui h1 { margin: 0 0 6px; font-size: 16px; letter-spacing: 0.5px; color: #8fdcff; }
