@@ -39,3 +39,13 @@ the initial distance between vertices: 50 px
 
 ## tech stack
 we use p5js for the interface and goban drawing
+
+## relaxation algorithm
+when there's no more triangles, only quads, do an auto relexation algorithm to make the quads as close to squares as possible. 
+in the UI, we put an relexation button, to start this relexation. and we show the relexation frames in the canvas as a visualization.
+
+## goban symbols
+execpt of the vertices on the edge, we put symbols on the special vertices. 
+- on 6 edges: white hole, using the "whitehole.png" in images folder
+- on 5 edges: star, draw a white circle
+- on 3 edges: black hole, using the "blackhole.png" in images folder
