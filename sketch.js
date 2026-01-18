@@ -3,8 +3,6 @@
 
 const spacing = 50;
 const hexRadius = 10; // yields 9 vertices per edge
-const canvasW = 1920;
-const canvasH = 1080;
 const sqrt3 = Math.sqrt(3);
 
 let vertices = []; // {id,x,y,type,q,r,neighbors:Set,triangles:Set,quads:Set,peers:number[]}
@@ -31,6 +29,7 @@ let relaxMaxFrames = 20;
 let relaxationStrength = spacing * 0.0008; // Scale relative to grid spacing (50 * 0.0008 = 0.04)
 let whi = null; // whitehole image
 let bhi = null; // blackhole image
+let woodTexture = null; // wood texture for goban border
 
 let autoRemoving = false;
 let autoRemoveIterations = 0;
@@ -43,6 +42,7 @@ let saveLoadStatusEl = null;
 function preload() {
   whi = loadImage('images/whitehole.png');
   bhi = loadImage('images/blackhole.png');
+  woodTexture = loadImage('images/wood_texture.png');
 }
 
 // Undo/Redo stack
@@ -55,7 +55,7 @@ const dirAxial = [
 ];
 
 function setup() {
-  const c = createCanvas(canvasW, canvasH);
+  const c = createCanvas(1920, 1080);
   c.parent('app');
   noLoop();
   buildGrid();
@@ -101,6 +101,7 @@ function windowResized() {
 
 function draw() {
   background(120, 100, 70);
+  drawGobanBorder();
   drawSectors();
   drawFaces();
   drawEdges();
@@ -128,14 +129,11 @@ function draw() {
     const deleted = autoRemoveEdgesStep();
     const triCount = triangles.filter((t) => t.active).length;
     
-    console.log(`Iteration ${autoRemoveIterations} (Retry ${autoRemoveRetries}): deleted=${deleted}, triCount=${triCount}`);
-    
     // Check if we're done (no more edges deleted in this pass)
     if (deleted === 0) {
       // One pass done, check if we got full quads
       if (triCount === 0) {
         // Success! Full quads achieved
-        console.log('✓ SUCCESS: All triangles merged to quads!');
         autoRemoving = false;
         autoRemoveStartSnapshot = null;
         updateAutoRemoveStatus();
@@ -143,14 +141,12 @@ function draw() {
         noLoop();
       } else if (autoRemoveRetries < autoRemoveMaxRetries) {
         // Failed, retry with different random shuffle
-        console.log(`✗ Failed (${triCount} triangles remain). Retrying...`);
         autoRemoveRetries++;
         autoRemoveIterations = 0;
         restoreSnapshot(autoRemoveStartSnapshot);
         updateAutoRemoveStatus();
       } else {
         // Max retries exceeded, revert completely
-        console.log(`✗ FAILED after ${autoRemoveMaxRetries} attempts`);
         autoRemoving = false;
         alert(`Failed to achieve full quads after ${autoRemoveMaxRetries} attempts. Reverting.`);
         restoreSnapshot(autoRemoveStartSnapshot);
@@ -271,8 +267,8 @@ function neighborId(v, coordToId, delta) {
 
 // ---- Geometry helpers ----
 function axialToPixel(q, r) {
-  const x = canvasW / 2 + spacing * (q + r * 0.5);
-  const y = canvasH / 2 + spacing * (r * (sqrt3 / 2));
+  const x = width / 2 + spacing * (q + r * 0.5);
+  const y = height / 2 + spacing * (r * (sqrt3 / 2));
   return { x, y };
 }
 
@@ -488,6 +484,148 @@ function drawSectors() {
   // Sector lines removed - they're not needed for the goban
 }
 
+function drawGobanBorder() {
+  // Draw hexagonal goban border using wood texture
+  // Offset outward from edge vertices by spacing/2
+  if (!woodTexture) return;
+  
+  // Find the 6 corner points of the hexagon using all visible vertices
+  const cornerPoints = findHexCorners(vertices);
+  if (cornerPoints.length < 6) return;
+  
+  // Calculate offset outward from center
+  const offset = spacing / 2;
+  const centerX = width / 2;
+  const centerY = height / 2;
+  
+  // Create inner and outer corner points
+  const corners = cornerPoints.map(v => {
+    const dx = v.x - centerX;
+    const dy = v.y - centerY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    
+    if (dist === 0) {
+      return { innerX: v.x, innerY: v.y, outerX: v.x, outerY: v.y };
+    }
+    
+    // Normalize direction
+    const normX = dx / dist;
+    const normY = dy / dist;
+    
+    return {
+      innerX: v.x,
+      innerY: v.y,
+      outerX: v.x + normX * offset,
+      outerY: v.y + normY * offset
+    };
+  });
+  
+  // Draw the wood texture as background
+  push();
+  noStroke();
+  
+  // Tile the wood texture at 100% scale
+  const textureW = woodTexture.width;
+  const textureH = woodTexture.height;
+  for (let x = -textureW; x < width + textureW; x += textureW) {
+    for (let y = -textureH; y < height + textureH; y += textureH) {
+      image(woodTexture, x, y);
+    }
+  }
+  
+  // Draw the inner hexagon with background color to mask the playing area
+  fill(0);
+  beginShape();
+  vertex(width, height);
+  vertex(width, 0);
+  vertex(0, 0);
+  vertex(0, height);
+  vertex(width, height);
+  corners.forEach(c => vertex(c.outerX, c.outerY));
+  vertex(corners[0].outerX, corners[0].outerY); // close loop
+  endShape(CLOSE);
+  
+  // DEBUG: Draw red circles on corner vertices
+  noFill();
+  stroke(255, 0, 0);
+  strokeWeight(3);
+  cornerPoints.forEach(v => {
+    circle(v.x, v.y, 12);
+  });
+  
+  pop();
+}
+
+function findHexCorners(edgeVertices) {
+  // Find the 6 true corner points of the hexagon purely geometrically
+  // These are the vertices most extreme in 6 directions (0°, 60°, 120°, 180°, 240°, 300°)
+  // Use ALL visible vertices, not just marked edge vertices
+  const centerX = width / 2;
+  const centerY = height / 2;
+  
+  // Use all visible vertices for finding corners
+  const allVerts = vertices.filter(v => v.visible !== false);
+  
+  const angles = [0, 60, 120, 180, 240, 300];
+  const corners = [];
+  
+  for (const angle of angles) {
+    const rad = angle * Math.PI / 180;
+    const dirX = Math.cos(rad);
+    const dirY = Math.sin(rad);
+    
+    // Find the vertex with maximum projection in this direction
+    let bestVertex = null;
+    let maxProjection = -Infinity;
+    
+    for (const v of allVerts) {
+      const dx = v.x - centerX;
+      const dy = v.y - centerY;
+      const projection = dx * dirX + dy * dirY;
+      
+      if (projection > maxProjection) {
+        maxProjection = projection;
+        bestVertex = v;
+      }
+    }
+    
+    if (bestVertex) {
+      corners.push(bestVertex);
+    }
+  }
+  
+  return corners;
+}
+
+function getCanvasCornerBetween(p1, p2) {
+  // Check if a canvas corner should be added between two outer points
+  const corners = [
+    { x: -1, y: -1 },
+    { x: width + 1, y: -1 },
+    { x: width + 1, y: height + 1 },
+    { x: -1, y: height + 1 }
+  ];
+  
+  for (const corner of corners) {
+    // Check if corner is on the "outside" between p1 and p2
+    const angle1 = Math.atan2(p1.y - height / 2, p1.x - width / 2);
+    const angle2 = Math.atan2(p2.y - height / 2, p2.x - width / 2);
+    const cornerAngle = Math.atan2(corner.y - height / 2, corner.x - width / 2);
+    
+    let angleBetween = false;
+    if (angle1 < angle2) {
+      angleBetween = cornerAngle > angle1 && cornerAngle < angle2;
+    } else {
+      angleBetween = cornerAngle > angle1 || cornerAngle < angle2;
+    }
+    
+    if (angleBetween) {
+      return corner;
+    }
+  }
+  return null;
+}
+
 function drawFaces() {
   noStroke();
   // Quads - no fill, just part of the goban
@@ -509,7 +647,7 @@ function drawFaces() {
 }
 
 function drawEdges() {
-  strokeWeight(0.8);
+  strokeWeight(2);
   for (const e of edges) {
     if (!e.active) continue;
     const tris = edgeTris.get(edgeKey(e.a, e.b)) || [];
@@ -945,11 +1083,6 @@ function startAutoRemoveEdges() {
     return;
   }
   
-  console.log('=== AUTO REMOVE STARTED ===');
-  console.log(`Active triangles: ${triCount}`);
-  console.log(`Total edges: ${edges.length}`);
-  console.log(`Edge-Tri Map size: ${edgeTris.size}`);
-  
   // Apply the guaranteed quadrangulation pipeline
   applyGuaranteedQuadrangulation();
 }
@@ -957,34 +1090,28 @@ function startAutoRemoveEdges() {
 function applyGuaranteedQuadrangulation() {
   captureState('quadrangulation');
   
-  console.log('Step 1: Reducing grid to inner region...');
   // STEP 1: Keep only inner radius=4 region (vertices are reduced by half)
   const targetRadius = Math.floor(hexRadius / 2);
   deactivateFacesOutsideRadius(targetRadius);
-  console.log(`Grid reduced to radius ${targetRadius}`);
 
-  console.log('Step 1.5: Marking border vertices...');
   // STEP 1.5: Mark border vertices before scaling/subdivision
   markBorderVertices(targetRadius);
   
-  console.log('Step 2: Scaling grid by 2x (doubling spacing)...');
   // STEP 2: Double the spacing (so subdivision will bring it back to normal)
   scaleGridByFactor(2.0);
   
-  console.log('Step 3: Random triangle merging...');
   // STEP 3: Try to merge adjacent triangles randomly
   const mergeResult = mergeTrianglesRandomly();
-  console.log(`Merged ${mergeResult.merged} triangle pairs into quads`);
-  console.log(`Remaining: ${triangles.filter(t => t.active).length} triangles, ${quads.filter(q => q.active).length} quads`);
   
-  console.log('Step 4: Subdividing all faces...');
   // STEP 4: Subdivide ALL remaining faces (doubles vertices, halves effective spacing back to normal)
   subdivideFaces();
-  console.log(`After subdivision: ${triangles.filter(t => t.active).length} triangles, ${quads.filter(q => q.active).length} quads`);
   
-  console.log('Step 5: Cleaning up old data structures...');
   // STEP 5: Remove all inactive triangles and old edges
   cleanupInactiveElements();
+
+  // STEP 6: Find border vertices using neighbor count (geometric truth)
+  // This MUST happen AFTER subdivision because axial coords (q,r) are invalid
+  findAndMarkBorderVertices();
 
   // Mark which vertices are actually used (to hide stray ones when drawing)
   markVisibleVertices();
@@ -994,8 +1121,8 @@ function applyGuaranteedQuadrangulation() {
 }
 
 function scaleGridByFactor(factor) {
-  const centerX = canvasW / 2;
-  const centerY = canvasH / 2;
+  const centerX = width / 2;
+  const centerY = height / 2;
   
   // Scale all vertex positions from center
   for (const v of vertices) {
@@ -1012,23 +1139,15 @@ function scaleGridByFactor(factor) {
     const b = vertices[e.b];
     e.mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
   }
-  
-  console.log(`Grid scaled by ${factor}x`);
 }
 
 function cleanupInactiveElements() {
   // Remove all inactive triangles
-  const activeTriCount = triangles.filter(t => t.active).length;
   triangles = triangles.filter(t => t.active);
-  console.log(`Removed ${activeTriCount} inactive triangles`);
   
   // Keep all quads (they're all active after subdivision)
-  const activeQuadCount = quads.filter(q => q.active).length;
-  console.log(`Kept ${activeQuadCount} active quads`);
-  
   // Rebuild edges completely from active quads only
   rebuildEdgesFromFaces();
-  console.log(`Rebuilt ${edges.length} edges`);
 }
 
 function markVisibleVertices() {
@@ -1159,6 +1278,26 @@ function markBorderVertices(borderRadius) {
   for (const v of vertices) {
     const dist = Math.max(Math.abs(v.q), Math.abs(v.r), Math.abs(-v.q - v.r));
     if (dist === borderRadius) {
+      v.type = 'edge';
+    }
+  }
+}
+
+function findAndMarkBorderVertices() {
+  // Reset all visible vertices to 'inner' first
+  for (const v of vertices) {
+    if (v.visible) {
+      v.type = 'inner';
+    }
+  }
+  
+  // Interior vertices have exactly 6 neighbors
+  // Border vertices have fewer than 6 neighbors
+  for (const v of vertices) {
+    if (!v.visible) continue;
+    
+    const neighborCount = v.neighbors.size;
+    if (neighborCount < 6) {
       v.type = 'edge';
     }
   }
@@ -1378,13 +1517,10 @@ function autoRemoveEdgesStep() {
     deleted++;
     merged_tris.add(tri1Id).add(tri2Id);
   }
-
-  console.log(`Pass: Found ${edges_to_delete.length} edges, deleted ${deleted}`);
   
   // PASS 2: If we still have triangles, try greedy fallback (any shared pair)
   const triCount = triangles.filter((t) => t.active).length;
   if (triCount > 0 && deleted === 0) {
-    console.log(`Fallback: ${triCount} triangles stuck, trying greedy merge...`);
     
     // Find ANY pair of triangles that share an edge
     const pairs = [];
@@ -1417,8 +1553,6 @@ function autoRemoveEdgesStep() {
         if (deleted >= 10) break; // Limit fallback per pass
       }
     }
-    
-    console.log(`Fallback: Merged ${deleted} more triangles`);
   }
 
   return deleted;

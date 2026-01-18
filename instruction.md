@@ -49,3 +49,36 @@ execpt of the vertices on the edge, we put symbols on the special vertices.
 - on 6 edges: white hole, using the "whitehole.png" in images folder
 - on 5 edges: star, draw a white circle
 - on 3 edges: black hole, using the "blackhole.png" in images folder
+
+# Menu
+
+## play at random goban
+- create a random goban in the background, Hex with 5 edges per border, auto subdivision, show the goban to the player, show auto relexation (100 steps)
+- if the player does not like it, he can redo this first step
+- the player can save the generated goban
+- connect to play mode
+
+## choose from preset gobans
+- premade gobans - 
+  幽玄 (Yugen - Deep Mystery)，
+  星影 (Hoshikage)，
+  星屑，Hoshikuzu，Stardust
+  演天，Enten，Celestial Deduction
+  奇门，Kimon，Mystic Gates
+  须弥，Shumi， Mount Sumeru
+  阵眼，Jin-gan， Nexus of the Array
+- connect to play mode
+
+
+## design your own goban
+- buttons: move, delete, undo/redo, 
+- relax (only when full quads)
+- connect to play mode
+
+# Playmode
+- the mouse has a black/white stone as a hint of who to add stone
+- ko(劫争) rule
+- stone indexing
+- game record saving/loading (loading include the goban shape and the game record)
+- scoring at the end
+- AI opponent (optional)
