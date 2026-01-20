@@ -2,7 +2,7 @@
 // Modes: move-vertex (default), delete-edge, select (view only)
 
 const spacing = 50;
-const hexRadius = 10; // yields 9 vertices per edge
+let hexRadius = 10; // yields 9 vertices per edge (can be changed for random generation)
 const sqrt3 = Math.sqrt(3);
 
 let vertices = []; // {id,x,y,type,q,r,neighbors:Set,triangles:Set,quads:Set,peers:number[]}
@@ -16,12 +16,14 @@ let hoverVertex = null;
 let hoverEdge = null;
 let dragging = null;
 let mode = 'move-vertex';
+let currentScreen = 'menu'; // menu, preset, random, editor, play
 
 // Go game state
 let gameStones = new Map(); // vid -> 'black' or 'white'
 let currentPlayer = 'black'; // whose turn
 let capturedBlack = 0;
 let capturedWhite = 0;
+let previousBoardState = null; // For Ko rule - stores the board state after the last move
 
 let relaxing = false;
 let relaxFrame = 0;
@@ -30,6 +32,7 @@ let relaxationStrength = spacing * 0.0008; // Scale relative to grid spacing (50
 let whi = null; // whitehole image
 let bhi = null; // blackhole image
 let woodTexture = null; // wood texture for goban border
+let coverImage = null; // cover image for menu background
 
 let autoRemoving = false;
 let autoRemoveIterations = 0;
@@ -39,15 +42,42 @@ let autoRemoveMaxRetries = 50;
 let autoRemoveStartSnapshot = null;
 let saveLoadStatusEl = null;
 
+let canvasCreated = false;
+// Keep canvas sized to the viewport
+function ensureCanvas() {
+  const w = windowWidth;
+  const h = windowHeight;
+  if (!canvasCreated) {
+    const c = createCanvas(w, h);
+    c.parent('app');
+    canvasCreated = true;
+  } else {
+    resizeCanvas(w, h);
+  }
+}
+
+// Helper: safely set display on an element
+function setDisplay(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = value;
+}
+
+// Preset gobans data - will be loaded from files
+const presetGobans = {};
+
 function preload() {
   whi = loadImage('images/whitehole.png');
   bhi = loadImage('images/blackhole.png');
   woodTexture = loadImage('images/wood_texture.png');
+  coverImage = loadImage('images/coverImagePlaceholder.png');
 }
 
-// Undo/Redo stack
-let undoStack = [];
-let undoIndex = -1;
+// Undo/Redo stacks - separated by mode
+let gobanUndoStack = [];  // For goban editing (vertices, edges, faces)
+let gobanUndoIndex = -1;
+
+let gameUndoStack = [];   // For stone placement/captures in play mode
+let gameUndoIndex = -1;
 
 const dirAxial = [
   [1, 0], [0, 1], [-1, 1],
@@ -55,12 +85,193 @@ const dirAxial = [
 ];
 
 function setup() {
-  const c = createCanvas(1920, 1080);
-  c.parent('app');
+  // Don't create canvas yet - wait for menu selection
   noLoop();
+  setupMenuListeners();
+}
+
+function setupMenuListeners() {
+  // Main menu
+  document.getElementById('menuRandomGoban')?.addEventListener('click', startRandomGoban);
+  document.getElementById('menuPresetGoban')?.addEventListener('click', showPresetMenu);
+  document.getElementById('menuDesignGoban')?.addEventListener('click', startDesignMode);
+  document.getElementById('menuLoadGoban')?.addEventListener('click', loadGoban);
+  document.getElementById('menuSettings')?.addEventListener('click', showSettings);
+  
+  // Preset menu
+  document.querySelectorAll('.preset-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => loadPresetGoban(e.target.dataset.preset));
+  });
+  document.getElementById('backToMenuFromPreset')?.addEventListener('click', showMainMenu);
+  
+  // Random menu
+  document.getElementById('regenerateBtn')?.addEventListener('click', generateRandomGoban);
+  document.getElementById('acceptRandomBtn')?.addEventListener('click', acceptRandomGoban);
+  
+  // Editor buttons
+  document.getElementById('backToMenuBtn')?.addEventListener('click', showMainMenu);
+}
+
+function showMainMenu() {
+  document.getElementById('menu').style.display = 'block';
+  document.getElementById('presetMenu').style.display = 'none';
+  document.getElementById('app').style.display = 'none';
+  setDisplay('ui', 'none');
+  setDisplay('uiRandom', 'none');
+  setDisplay('uiEdit', 'none');
+  setDisplay('uiPlay', 'none');
+  currentScreen = 'menu';
+  
+  // Clear play mode and stones when returning to menu
+  if (mode === 'play') {
+    mode = 'move-vertex';
+    gameStones.clear();
+    currentPlayer = 'black';
+    capturedBlack = 0;
+    capturedWhite = 0;
+  }
+  
+  noLoop();
+}
+
+function showPresetMenu() {
+  document.getElementById('menu').style.display = 'none';
+  document.getElementById('presetMenu').style.display = 'block';
+  document.getElementById('app').style.display = 'none';
+  setDisplay('ui', 'none');
+  setDisplay('uiRandom', 'none');
+  setDisplay('uiEdit', 'none');
+  setDisplay('uiPlay', 'none');
+  currentScreen = 'preset';
+}
+
+function startRandomGoban() {
+  document.getElementById('menu').style.display = 'none';
+  document.getElementById('presetMenu').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  setDisplay('ui', 'block');
+  setDisplay('uiRandom', 'block');
+  setDisplay('uiEdit', 'none');
+  setDisplay('uiPlay', 'none');
+  currentScreen = 'random';
+
+  ensureCanvas();
+
+  generateRandomGoban();
+}
+
+function generateRandomGoban() {
+  hexRadius = 10; // Use standard size (9 vertices per edge)
+  buildGrid();
+  
+  document.getElementById('randomStatus').textContent = 'Generating goban...';
+  document.getElementById('regenerateBtn').style.display = 'none';
+  document.getElementById('acceptRandomBtn').style.display = 'none';
+  
+  // Apply quadrangulation
+  setTimeout(() => {
+    applyGuaranteedQuadrangulation();
+    
+    // Start relaxation for 100 steps
+    relaxMaxFrames = 100;
+    relaxing = true;
+    relaxFrame = 0;
+    loop();
+    
+    // After relaxation completes, show buttons
+    setTimeout(() => {
+      document.getElementById('randomStatus').textContent = 'Goban generated!';
+      document.getElementById('regenerateBtn').style.display = 'inline-block';
+      document.getElementById('acceptRandomBtn').style.display = 'inline-block';
+    }, 100 * 50); // Approximate time for 100 frames
+  }, 100);
+}
+
+function acceptRandomGoban() {
+  // Transition to play mode with a clear goban
+  mode = 'play';
+  gameStones.clear(); // Clear any previous stones
+  currentPlayer = 'black';
+  capturedBlack = 0;
+  capturedWhite = 0;
+  initGameHistory(); // Fresh game undo/redo with base snapshot
+  updateGameUI();
+  setDisplay('uiRandom', 'none');
+  setDisplay('uiEdit', 'none');
+  setDisplay('uiPlay', 'block');
+  currentScreen = 'play';
+  setupPlayButtons();
+  redraw();
+}
+
+function startDesignMode() {
+  document.getElementById('menu').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  document.getElementById('presetMenu').style.display = 'none';
+  setDisplay('ui', 'block');
+  setDisplay('uiRandom', 'none');
+  setDisplay('uiEdit', 'block');
+  setDisplay('uiPlay', 'none');
+  currentScreen = 'editor';
+
+  ensureCanvas();
+
+  hexRadius = 10;
   buildGrid();
   captureState('initial');
   updateUiCounts();
+  setupEditorButtons();
+  redraw();
+}
+
+function loadPresetGoban(presetName) {
+  document.getElementById('presetMenu').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  currentScreen = 'play';
+
+  ensureCanvas();
+
+  // TODO: Load preset from file
+  // For now, create a placeholder
+  alert(`Loading preset "${presetName}" - file loading not yet implemented`);
+  showMainMenu();
+}
+
+function showSettings() {
+  // Settings screen - placeholder for now
+  alert('Settings - coming soon');
+}
+
+function relaxForFrames(frames) {
+  // Perform relaxation synchronously
+  for (let i = 0; i < frames; i++) {
+    relaxVertices(1);
+  }
+}
+
+function setupEditorButtons() {
+  // Wire up mode buttons
+  const moveModeBtn = document.getElementById('moveModeBtn');
+  const deleteEdgeModeBtn = document.getElementById('deleteEdgeModeBtn');
+  const selectModeBtn = document.getElementById('selectModeBtn');
+  
+  if (moveModeBtn) moveModeBtn.addEventListener('click', () => {
+    mode = 'move-vertex';
+    updateUiMode();
+    redraw();
+  });
+  
+  if (deleteEdgeModeBtn) deleteEdgeModeBtn.addEventListener('click', () => {
+    mode = 'delete-edge';
+    updateUiMode();
+    redraw();
+  });
+  
+  if (selectModeBtn) selectModeBtn.addEventListener('click', () => {
+    mode = 'select';
+    updateUiMode();
+    redraw();
+  });
   
   // Wire up the relax button
   const relaxBtn = document.getElementById('relaxBtn');
@@ -95,8 +306,27 @@ function setup() {
   updateUndoUI();
 }
 
+function setupPlayButtons() {
+  const undoBtn = document.getElementById('gameUndoBtn');
+  const redoBtn = document.getElementById('gameRedoBtn');
+  const saveGameBtn = document.getElementById('saveGameBtn');
+
+  if (undoBtn) undoBtn.onclick = undoStep;
+  if (redoBtn) redoBtn.onclick = redoStep;
+  if (saveGameBtn) saveGameBtn.onclick = saveGame;
+
+  updateUndoUI();
+}
+
+function saveGame() {
+  alert('Save game (stones + goban) not implemented yet');
+}
+
 function windowResized() {
-  // Canvas size is fixed per spec; ignore window changes.
+  if (canvasCreated) {
+    ensureCanvas();
+    redraw();
+  }
 }
 
 function draw() {
@@ -107,7 +337,10 @@ function draw() {
   drawEdges();
   drawVertices();
   drawSymbols();
-  if (mode === 'play') drawStones();
+  if (mode === 'play') {
+    drawStones();
+    drawStonePreview();
+  }
   
   if (relaxing) {
     relaxFrame++;
@@ -924,16 +1157,31 @@ function drawSymbols() {
 function togglePlayMode() {
   if (mode === 'play') {
     mode = 'move-vertex';
+    setDisplay('uiPlay', 'none');
+    setDisplay('uiEdit', 'block');
   } else {
     mode = 'play';
     gameStones.clear();
     currentPlayer = 'black';
     capturedBlack = 0;
     capturedWhite = 0;
+    initGameHistory();
+    setDisplay('uiEdit', 'none');
+    setDisplay('uiPlay', 'block');
+    setupPlayButtons();
   }
   updateUiMode();
   updateGameUI();
   redraw();
+}
+
+// Initialize game history with a baseline snapshot (empty board)
+function initGameHistory() {
+  previousBoardState = null; // Reset Ko state
+  const snapshot = captureGameState('start');
+  gameUndoStack = [snapshot];
+  gameUndoIndex = 0;
+  updateUndoUI();
 }
 
 function drawStones() {
@@ -979,6 +1227,67 @@ function drawStones() {
   }
 }
 
+function drawStonePreview() {
+  // Draw a preview stone following the mouse cursor
+  if (hoverVertex !== null && !gameStones.has(hoverVertex)) {
+    const v = vertices[hoverVertex];
+    if (v && v.visible !== false) {
+      push();
+      noStroke();
+      
+      if (currentPlayer === 'black') {
+        fill(20, 20, 25, 150);
+        circle(v.x, v.y, spacing*0.65);
+        fill(80, 80, 90, 80);
+        circle(v.x - 4, v.y - 4, spacing*0.25);
+      } else {
+        fill(250, 250, 245, 150);
+        circle(v.x, v.y, spacing*0.65);
+        fill(200, 200, 195, 60);
+        circle(v.x + 3, v.y + 3, spacing*0.25);
+      }
+      
+      pop();
+    }
+  }
+  
+  // Also draw a ghost stone at mouse cursor
+  push();
+  noStroke();
+  if (currentPlayer === 'black') {
+    fill(20, 20, 25, 80);
+  } else {
+    fill(250, 250, 245, 80);
+  }
+  circle(mouseX, mouseY, spacing*0.5);
+  pop();
+}
+
+// Helper: capture game state for undo/redo in play mode
+function captureGameState(moveDescription) {
+  const snapshot = {
+    type: 'game',
+    label: moveDescription,
+    stones: new Map(gameStones), // Copy of stone placements
+    currentPlayer: currentPlayer,
+    capturedBlack: capturedBlack,
+    capturedWhite: capturedWhite,
+    previousBoardState: previousBoardState ? new Map(previousBoardState) : null,
+  };
+  return snapshot;
+}
+
+function restoreGameState(snapshot) {
+  if (snapshot.type !== 'game') return;
+  gameStones = new Map(snapshot.stones);
+  currentPlayer = snapshot.currentPlayer;
+  capturedBlack = snapshot.capturedBlack;
+  capturedWhite = snapshot.capturedWhite;
+  previousBoardState = snapshot.previousBoardState ? new Map(snapshot.previousBoardState) : null;
+  updateGameUI();
+  redraw();
+}
+
 function placeStone(vid) {
   // Can't place on occupied vertex
   if (gameStones.has(vid)) return;
@@ -987,39 +1296,90 @@ function placeStone(vid) {
   const v = vertices[vid];
   if (v.visible === false) return;
   
-  // Place the stone
+  const moveColor = currentPlayer;
+  const opponent = currentPlayer === 'black' ? 'white' : 'black';
+  
+  // Save board state BEFORE this move for Ko detection on the next move
+  const boardBeforeThisMove = new Map(gameStones);
+  
+  // Tentatively place the stone to test validity
   gameStones.set(vid, currentPlayer);
   
-  // Check for captures of opponent groups
-  const opponent = currentPlayer === 'black' ? 'white' : 'black';
+  // Find which opponent groups would be captured
   const neighbors = Array.from(v.neighbors);
+  const capturedGroups = [];
   
   for (const nid of neighbors) {
     if (gameStones.get(nid) === opponent) {
       const liberties = getGroupLiberties(nid);
       if (liberties === 0) {
-        // Capture this group
+        // This group would be captured
         const group = getGroup(nid);
-        for (const gvid of group) {
-          gameStones.delete(gvid);
-          if (opponent === 'black') capturedBlack++;
-          else capturedWhite++;
-        }
+        capturedGroups.push(group);
       }
     }
   }
   
-  // Check if our own move is suicide (no liberties and didn't capture anything)
+  // Remove captured groups temporarily to check our own liberties
+  const tempCaptured = [];
+  for (const group of capturedGroups) {
+    for (const gvid of group) {
+      tempCaptured.push(gvid);
+      gameStones.delete(gvid);
+    }
+  }
+  
+  // Check if our own move is suicide (no liberties after captures)
   const ourLiberties = getGroupLiberties(vid);
+  
   if (ourLiberties === 0) {
-    // Suicide move - not allowed, revert
+    // Suicide move - not allowed, revert everything
     gameStones.delete(vid);
-    alert('Suicide move not allowed!');
+    // Restore captured stones
+    for (const gvid of tempCaptured) {
+      gameStones.set(gvid, opponent);
+    }
+    // Show warning in console instead of blocking alert
+    console.warn('❌ Suicide move not allowed!');
     return;
   }
   
-  // Switch player
+  // Check Ko rule: would this move recreate the previous board position?
+  console.log('Ko check:', {
+    hasPrevious: !!previousBoardState,
+    currentSize: gameStones.size,
+    previousSize: previousBoardState?.size,
+    isEqual: previousBoardState ? boardStatesEqual(gameStones, previousBoardState) : false
+  });
+  
+  if (previousBoardState && boardStatesEqual(gameStones, previousBoardState)) {
+    // Ko violation - revert everything
+    gameStones.delete(vid);
+    // Restore captured stones
+    for (const gvid of tempCaptured) {
+      gameStones.set(gvid, opponent);
+    }
+    console.warn('❌ Ko rule violation! Cannot immediately recapture.');
+    return;
+  }
+  
+  // Valid move - make captures permanent
+  for (const gvid of tempCaptured) {
+    if (opponent === 'black') capturedBlack++;
+    else capturedWhite++;
+  }
+  
+  // Save the board state from BEFORE this move for Ko detection
+  // (so next move can't recreate this pre-move state)
+  previousBoardState = boardBeforeThisMove;
+  
+  // Switch player (the next player to move)
   currentPlayer = opponent;
+  
+  // Valid move - capture to game history with correct next-to-move turn
+  const moveDesc = moveColor === 'black' ? '⚫' : '⚪';
+  captureGameMove(moveDesc);
+  
   updateGameUI();
 }
 
@@ -1064,14 +1424,32 @@ function getGroupLiberties(vid) {
   return liberties.size;
 }
 
-function updateGameUI() {
-  const gameInfoEl = document.getElementById('gameInfo');
-  if (!gameInfoEl) return;
+function boardStatesEqual(state1, state2) {
+  // Compare two board states (Maps of vid -> color)
+  if (state1.size !== state2.size) return false;
   
-  if (mode === 'play') {
-    gameInfoEl.textContent = `Turn: ${currentPlayer.toUpperCase()} | Captured: Black ${capturedBlack}, White ${capturedWhite}`;
-  } else {
-    gameInfoEl.textContent = '';
+  for (const [vid, color] of state1) {
+    if (state2.get(vid) !== color) return false;
+  }
+  
+  return true;
+}
+
+function updateGameUI() {
+  const turnEl = document.getElementById('gameTurn');
+  const capBlackEl = document.getElementById('capBlack');
+  const capWhiteEl = document.getElementById('capWhite');
+  const gameInfoEl = document.getElementById('gameInfo');
+
+  if (turnEl) turnEl.textContent = currentPlayer === 'black' ? 'Black' : 'White';
+  if (capBlackEl) capBlackEl.textContent = capturedBlack;
+  if (capWhiteEl) capWhiteEl.textContent = capturedWhite;
+  if (gameInfoEl) {
+    if (mode === 'play') {
+      gameInfoEl.textContent = `Turn: ${currentPlayer.toUpperCase()} | Captured: Black ${capturedBlack}, White ${capturedWhite}`;
+    } else {
+      gameInfoEl.textContent = '';
+    }
   }
 }
 
@@ -1601,32 +1979,92 @@ function captureStateSnapshot() {
   };
 }
 
+// Helper functions to get the correct undo stack for current mode
+function getCurrentUndoStack() {
+  return mode === 'play' ? gameUndoStack : gobanUndoStack;
+}
+
+function getCurrentUndoIndex() {
+  return mode === 'play' ? gameUndoIndex : gobanUndoIndex;
+}
+
+function setCurrentUndoIndex(val) {
+  if (mode === 'play') {
+    gameUndoIndex = val;
+  } else {
+    gobanUndoIndex = val;
+  }
+}
+
 function captureState(actionLabel) {
+  // Route to appropriate capture function based on mode
+  if (mode === 'play') {
+    captureGameMove(actionLabel);
+  } else {
+    captureGobanEdit(actionLabel);
+  }
+}
+
+function captureGobanEdit(actionLabel) {
+  const stack = gobanUndoStack;
+  const idx = gobanUndoIndex;
+  
   // Truncate redo stack
-  undoStack.splice(undoIndex + 1);
+  stack.splice(idx + 1);
   
   // Create snapshot
   const snapshot = captureStateSnapshot();
   snapshot.label = actionLabel;
   
-  undoStack.push(snapshot);
-  undoIndex++;
+  stack.push(snapshot);
+  gobanUndoIndex++;
+  updateUndoUI();
+}
+
+function captureGameMove(moveDesc) {
+  const stack = gameUndoStack;
+  const idx = gameUndoIndex;
+  
+  // Truncate redo stack
+  stack.splice(idx + 1);
+  
+  // Capture game state
+  const snapshot = captureGameState(moveDesc);
+  stack.push(snapshot);
+  gameUndoIndex++;
   updateUndoUI();
 }
 
 function undoStep() {
-  if (undoIndex <= 0) return; // No undo available
-  undoIndex--;
-  restoreSnapshot(undoStack[undoIndex]);
+  const stack = getCurrentUndoStack();
+  let idx = getCurrentUndoIndex();
+  
+  if (idx <= 0) return; // No undo available
+  idx--;
+  setCurrentUndoIndex(idx);
+  restoreSnapshot(stack[idx]);
 }
 
 function redoStep() {
-  if (undoIndex >= undoStack.length - 1) return; // No redo available
-  undoIndex++;
-  restoreSnapshot(undoStack[undoIndex]);
+  const stack = getCurrentUndoStack();
+  let idx = getCurrentUndoIndex();
+  
+  if (idx >= stack.length - 1) return; // No redo available
+  idx++;
+  setCurrentUndoIndex(idx);
+  restoreSnapshot(stack[idx]);
 }
 
 function restoreSnapshot(snapshot) {
+  // Route to appropriate restore based on snapshot type
+  if (snapshot.type === 'game') {
+    restoreGameState(snapshot);
+  } else {
+    restoreGobanSnapshot(snapshot);
+  }
+}
+
+function restoreGobanSnapshot(snapshot) {
   // Clear and rebuild data structures
   vertices = snapshot.vertices.map(v => ({
     id: v.id, q: v.q, r: v.r, x: v.x, y: v.y, type: v.type,
@@ -1674,13 +2112,22 @@ function addEdgeTriangleMapped(a, b, triId) {
 }
 
 function updateUndoUI() {
-  const undoBtn = document.getElementById('undoBtn');
-  const redoBtn = document.getElementById('redoBtn');
-  const undoStatus = document.getElementById('undoStatus');
-  
-  if (undoBtn) undoBtn.disabled = undoIndex <= 0;
-  if (redoBtn) redoBtn.disabled = undoIndex >= undoStack.length - 1;
-  if (undoStatus) undoStatus.textContent = `Undo: ${undoIndex}/${undoStack.length - 1}`;
+  const stack = getCurrentUndoStack();
+  const idx = getCurrentUndoIndex();
+
+  const undoBtn = mode === 'play'
+    ? document.getElementById('gameUndoBtn')
+    : document.getElementById('undoBtn');
+  const redoBtn = mode === 'play'
+    ? document.getElementById('gameRedoBtn')
+    : document.getElementById('redoBtn');
+  const undoStatus = mode === 'play'
+    ? document.getElementById('gameUndoStatus')
+    : document.getElementById('undoStatus');
+
+  if (undoBtn) undoBtn.disabled = idx <= 0;
+  if (redoBtn) redoBtn.disabled = idx >= stack.length - 1;
+  if (undoStatus) undoStatus.textContent = `Undo: ${idx}/${stack.length - 1}`;
 }
 
 function subdivideMesh() {

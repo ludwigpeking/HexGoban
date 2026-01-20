@@ -82,3 +82,19 @@ execpt of the vertices on the edge, we put symbols on the special vertices.
 - game record saving/loading (loading include the goban shape and the game record)
 - scoring at the end
 - AI opponent (optional)
+
+
+the mode control is a chaos now.
+when only playmode, you can place stones on the board. 
+you should take my instruction literal
+we talk about two buttons for now (the other three we don't talk about now)
+
+1 play at random goban: 
+when you enter, it auto generating the goban, correct. when finished, you can click "accept & play" button, which bring you directly to playmode.
+playmode has its own menu and history stack.
+playmode has: Black Turn/What Turn display, the ability to place stones to the board, undo/redo moves, save game(with the goban). 
+so the munu we show now is not for playmode, understnad?
+3 design you own goban:
+when you enter, you are at edit mode, the menu is right for it. when you click on "play go[p/P]" , you enter playmode, the menu should change totally.
+
+

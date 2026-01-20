@@ -8,35 +8,96 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <main id="app">
+  <!-- Menu Screen -->
+  <div id="menu">
+    <h1>星旋圍碁 <br>VortecGo</h1>
+    <div class="menu-buttons">
+      <button class="menu-btn" id="menuRandomGoban">隨機棋盤<br>Play at Random Goban</button>
+      <button class="menu-btn" id="menuPresetGoban">從預設棋盤中選擇<br>Choose from Preset Gobans</button>
+      <button class="menu-btn" id="menuDesignGoban">設計自己的棋盤<br>Design Your Own Goban</button>
+      <button class="menu-btn" id="menuLoadGoban">載入棋盤<br>Load Goban</button>
+      <button class="menu-btn" id="menuSettings">設定<br>Settings</button>
+    </div>
+  </div>
+
+  <!-- Preset Selection Screen -->
+  <div id="presetMenu" style="display: none;">
+    <h1>Choose a Preset Goban</h1>
+    <div class="preset-options">
+      <button class="preset-btn" data-preset="yugen">幽玄 (Yugen - Deep Mystery)</button>
+      <button class="preset-btn" data-preset="hoshikage">星影 (Hoshikage - Star Shadow)</button>
+      <button class="preset-btn" data-preset="hoshikuzu">星屑 (Hoshikuzu - Stardust)</button>
+      <button class="preset-btn" data-preset="enten">演天 (Enten - Celestial Deduction)</button>
+      <button class="preset-btn" data-preset="kimon">奇门 (Kimon - Mystic Gates)</button>
+      <button class="preset-btn" data-preset="shumi">須弥 (Shumi - Mount Sumeru)</button>
+      <button class="preset-btn" data-preset="jingan">陣眼 (Jin-gan - Nexus of the Array)</button>
+    </div>
+    <button id="backToMenuFromPreset">Back to Menu</button>
+  </div>
+
+  <!-- Editor/Game Screen -->
+  <main id="app" style="display: none;">
     <div id="ui">
       <h1>Hex Goban</h1>
-      <div class="row">Mode: <span id="mode">move-vertex</span></div>
-      <div class="row">Hover: <span id="hover">none</span></div>
-      <div class="row">Vertices: <span id="vertexCount">0</span> · Triangles: <span id="triCount">0</span> · Quads: <span id="quadCount">0</span></div>
       <div class="row">
-        <button id="undoBtn">Undo [Ctrl+Z]</button>
-        <button id="redoBtn">Redo [Ctrl+Shift+Z]</button>
-        <span id="undoStatus"></span>
+        <button id="backToMenuBtn">Back to Menu</button>
       </div>
-      <div class="row">
-        <button id="autoRemoveBtn">Auto Remove Edges</button>
-        <span id="autoRemoveStatus"></span>
+
+      <div id="uiRandom" style="display: none;">
+        <div class="row"><strong>Random Goban Generation</strong></div>
+        <div class="row" id="randomStatus">Generating goban...</div>
+        <button id="regenerateBtn" style="display: none;">Generate Another</button>
+        <button id="acceptRandomBtn" style="display: none;">Accept & Play</button>
       </div>
-      <div class="row">
-        <button id="relaxBtn">Relax [r/R]</button>
-        <span id="relaxStatus"></span>
+
+      <div id="uiEdit" style="display: none;">
+        <div class="row"><strong>Editor Mode</strong></div>
+        <div class="row">
+          <button id="moveModeBtn">Move Vertex [v]</button>
+          <button id="deleteEdgeModeBtn">Delete Edge [e]</button>
+          <button id="selectModeBtn">Select [s]</button>
+        </div>
+        <div class="row">Current: <span id="mode">move-vertex</span></div>
+        <div class="row">Hover: <span id="hover">none</span></div>
+        <div class="row">Vertices: <span id="vertexCount">0</span> · Triangles: <span id="triCount">0</span> · Quads: <span id="quadCount">0</span></div>
+        <div class="row">
+          <button id="undoBtn">Undo [Ctrl+Z]</button>
+          <button id="redoBtn">Redo [Ctrl+Shift+Z]</button>
+          <span id="undoStatus"></span>
+        </div>
+        <div class="row">
+          <button id="autoRemoveBtn">Auto Remove Edges</button>
+          <span id="autoRemoveStatus"></span>
+        </div>
+        <div class="row">
+          <button id="relaxBtn">Relax [r/R]</button>
+          <span id="relaxStatus"></span>
+        </div>
+        <div class="row">
+          <button id="saveBtn">Save Goban</button>
+          <button id="loadBtn">Load Goban</button>
+          <span id="saveLoadStatus"></span>
+        </div>
+        <div class="row">
+          <button id="playBtn">Play Go [p/P]</button>
+        </div>
+        <div class="row">Tip: Drag vertices to move · Click edge midpoint to delete</div>
       </div>
-      <div class="row">
-        <button id="saveBtn">Save Goban</button>
-        <button id="loadBtn">Load Goban</button>
-        <span id="saveLoadStatus"></span>
+
+      <div id="uiPlay" style="display: none;">
+        <div class="row"><strong>Play Mode</strong></div>
+        <div class="row">Turn: <span id="gameTurn">Black</span></div>
+        <div class="row">Captured — Black: <span id="capBlack">0</span> · White: <span id="capWhite">0</span></div>
+        <div class="row">
+          <button id="gameUndoBtn">Undo Move</button>
+          <button id="gameRedoBtn">Redo Move</button>
+          <span id="gameUndoStatus"></span>
+        </div>
+        <div class="row">
+          <button id="saveGameBtn">Save Game</button>
+        </div>
+        <div class="row">Click a point to place stones. [Ctrl+Z] undo / [Ctrl+Shift+Z] redo moves.</div>
       </div>
-      <div class="row">
-        <button id="playBtn">Play Go [p/P]</button>
-        <span id="gameInfo"></span>
-      </div>
-      <div class="row">Controls: [v/V] move vertex · [e/E] delete edge · [s/S] select · [p/P] play Go · Drag to move · Click midpoint to delete</div>
     </div>
   </main>
   <script src="sketch.js"></script>
