@@ -57,6 +57,12 @@
           <button id="deleteEdgeModeBtn">Delete Edge [e]</button>
           <button id="selectModeBtn">Select [s]</button>
         </div>
+        <div class="row"><strong>Goban Size</strong></div>
+        <div class="row" style="display: flex; gap: 4px;">
+          <button id="sizeBtn6" style="flex: 1;">6</button>
+          <button id="sizeBtn8" style="flex: 1;">8</button>
+          <button id="sizeBtn10" style="flex: 1;">10</button>
+        </div>
         <div class="row">Current: <span id="mode">move-vertex</span></div>
         <div class="row">Hover: <span id="hover">none</span></div>
         <div class="row">Vertices: <span id="vertexCount">0</span> · Triangles: <span id="triCount">0</span> · Quads: <span id="quadCount">0</span></div>
@@ -95,6 +101,11 @@
         </div>
         <div class="row">
           <button id="saveGameBtn">Save Game</button>
+          <button id="loadGameBtn">Load Game</button>
+          <span id="gameLoadStatus"></span>
+        </div>
+        <div class="row">
+          <button id="toggleIndicesBtn">Show Stone Indices</button>
         </div>
         <div class="row">Click a point to place stones. [Ctrl+Z] undo / [Ctrl+Shift+Z] redo moves.</div>
       </div>

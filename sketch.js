@@ -20,10 +20,12 @@ let currentScreen = 'menu'; // menu, preset, random, editor, play
 
 // Go game state
 let gameStones = new Map(); // vid -> 'black' or 'white'
+let stoneOrder = new Map(); // vid -> move order (1-indexed)
 let currentPlayer = 'black'; // whose turn
 let capturedBlack = 0;
 let capturedWhite = 0;
 let previousBoardState = null; // For Ko rule - stores the board state after the last move
+let showStoneIndices = false; // Toggle stone indices display
 
 let relaxing = false;
 let relaxFrame = 0;
@@ -95,7 +97,7 @@ function setupMenuListeners() {
   document.getElementById('menuRandomGoban')?.addEventListener('click', startRandomGoban);
   document.getElementById('menuPresetGoban')?.addEventListener('click', showPresetMenu);
   document.getElementById('menuDesignGoban')?.addEventListener('click', startDesignMode);
-  document.getElementById('menuLoadGoban')?.addEventListener('click', loadGoban);
+  document.getElementById('menuLoadGoban')?.addEventListener('click', startLoadGoban);
   document.getElementById('menuSettings')?.addEventListener('click', showSettings);
   
   // Preset menu
@@ -172,8 +174,8 @@ function generateRandomGoban() {
   setTimeout(() => {
     applyGuaranteedQuadrangulation();
     
-    // Start relaxation for 100 steps
-    relaxMaxFrames = 100;
+    // Start relaxation for 30 steps
+    relaxMaxFrames = 30;
     relaxing = true;
     relaxFrame = 0;
     loop();
@@ -183,7 +185,7 @@ function generateRandomGoban() {
       document.getElementById('randomStatus').textContent = 'Goban generated!';
       document.getElementById('regenerateBtn').style.display = 'inline-block';
       document.getElementById('acceptRandomBtn').style.display = 'inline-block';
-    }, 100 * 50); // Approximate time for 100 frames
+    }, 30 * 50); // Approximate time for 30 frames
   }, 100);
 }
 
@@ -242,6 +244,14 @@ function showSettings() {
   alert('Settings - coming soon');
 }
 
+function changeGobanSize(newRadius) {
+  hexRadius = newRadius;
+  buildGrid();
+  captureState('initial');
+  updateUiCounts();
+  redraw();
+}
+
 function relaxForFrames(frames) {
   // Perform relaxation synchronously
   for (let i = 0; i < frames; i++) {
@@ -272,6 +282,15 @@ function setupEditorButtons() {
     updateUiMode();
     redraw();
   });
+  
+  // Wire up size buttons
+  const sizeBtn6 = document.getElementById('sizeBtn6');
+  const sizeBtn8 = document.getElementById('sizeBtn8');
+  const sizeBtn10 = document.getElementById('sizeBtn10');
+  
+  if (sizeBtn6) sizeBtn6.addEventListener('click', () => changeGobanSize(6));
+  if (sizeBtn8) sizeBtn8.addEventListener('click', () => changeGobanSize(8));
+  if (sizeBtn10) sizeBtn10.addEventListener('click', () => changeGobanSize(10));
   
   // Wire up the relax button
   const relaxBtn = document.getElementById('relaxBtn');
@@ -310,16 +329,128 @@ function setupPlayButtons() {
   const undoBtn = document.getElementById('gameUndoBtn');
   const redoBtn = document.getElementById('gameRedoBtn');
   const saveGameBtn = document.getElementById('saveGameBtn');
+  const loadGameBtn = document.getElementById('loadGameBtn');
+  const toggleIndicesBtn = document.getElementById('toggleIndicesBtn');
 
   if (undoBtn) undoBtn.onclick = undoStep;
   if (redoBtn) redoBtn.onclick = redoStep;
   if (saveGameBtn) saveGameBtn.onclick = saveGame;
+  if (loadGameBtn) {
+    saveLoadStatusEl = document.getElementById('gameLoadStatus');
+    loadGameBtn.onclick = loadGame;
+  }
+  if (toggleIndicesBtn) {
+    toggleIndicesBtn.onclick = () => {
+      showStoneIndices = !showStoneIndices;
+      toggleIndicesBtn.textContent = showStoneIndices ? 'Hide Stone Indices' : 'Show Stone Indices';
+      redraw();
+    };
+  }
 
   updateUndoUI();
 }
 
 function saveGame() {
-  alert('Save game (stones + goban) not implemented yet');
+  const data = {
+    version: 1,
+    type: 'game',
+    timestamp: new Date().toISOString(),
+    hexRadius,
+    spacing,
+    // Goban structure
+    vertices: vertices.map((v) => ({
+      id: v.id,
+      x: v.x,
+      y: v.y,
+      type: v.type,
+      q: v.q ?? 0,
+      r: v.r ?? 0,
+      peers: v.peers ?? [v.id, v.id, v.id],
+    })),
+    quads: quads.filter((q) => q.active).map((q) => ({ verts: [...q.verts] })),
+    // Game state
+    gameStones: Array.from(gameStones.entries()), // Convert Map to array
+    stoneOrder: Array.from(stoneOrder.entries()), // Convert Map to array
+    currentPlayer: currentPlayer,
+    capturedBlack: capturedBlack,
+    capturedWhite: capturedWhite,
+    previousBoardState: previousBoardState ? Array.from(previousBoardState.entries()) : null,
+    // Move history
+    gameUndoStack: gameUndoStack.map((snapshot) => ({
+      label: snapshot.label,
+      stones: Array.from(snapshot.stones.entries()),
+      stoneOrder: Array.from(snapshot.stoneOrder.entries()),
+      currentPlayer: snapshot.currentPlayer,
+      capturedBlack: snapshot.capturedBlack,
+      capturedWhite: snapshot.capturedWhite,
+      previousBoardState: snapshot.previousBoardState ? Array.from(snapshot.previousBoardState.entries()) : null,
+    })),
+    gameUndoIndex: gameUndoIndex,
+  };
+
+  const fname = `game_${Date.now()}.json`;
+  saveJSON(data, fname);
+  if (saveLoadStatusEl) saveLoadStatusEl.textContent = `Saved ${fname}`;
+}
+
+function loadGame() {
+  const picker = createFileInput(handleFile, false);
+  picker.elt.accept = 'application/json';
+  picker.elt.click();
+
+  function handleFile(file) {
+    if (file?.type === 'application' && file.subtype === 'json') {
+      const data = file.data || file.string;
+      try {
+        const json = typeof data === 'string' ? JSON.parse(data) : data;
+        if (json.type === 'game') {
+          // Restore goban first
+          restoreGoban(json);
+          // Then restore game state and history
+          restoreGameFromData(json);
+          // Switch to play mode
+          mode = 'play';
+          currentScreen = 'play';
+          setDisplay('uiPlay', 'block');
+          setDisplay('uiRandom', 'none');
+          setDisplay('uiEdit', 'none');
+          setupPlayButtons();
+          updateGameUI();
+          redraw();
+          if (saveLoadStatusEl) saveLoadStatusEl.textContent = 'Game loaded';
+        } else {
+          if (saveLoadStatusEl) saveLoadStatusEl.textContent = 'Not a game file';
+        }
+      } catch (e) {
+        console.error('Failed to load game', e);
+        if (saveLoadStatusEl) saveLoadStatusEl.textContent = 'Load failed';
+      }
+    }
+    picker.remove();
+  }
+}
+
+function restoreGameFromData(data) {
+  // Restore game state
+  gameStones = new Map(data.gameStones);
+  stoneOrder = new Map(data.stoneOrder || []);
+  currentPlayer = data.currentPlayer;
+  capturedBlack = data.capturedBlack;
+  capturedWhite = data.capturedWhite;
+  previousBoardState = data.previousBoardState ? new Map(data.previousBoardState) : null;
+
+  // Restore game history
+  gameUndoStack = data.gameUndoStack.map((snapshot) => ({
+    type: 'game',
+    label: snapshot.label,
+    stones: new Map(snapshot.stones),
+    stoneOrder: new Map(snapshot.stoneOrder || []),
+    currentPlayer: snapshot.currentPlayer,
+    capturedBlack: snapshot.capturedBlack,
+    capturedWhite: snapshot.capturedWhite,
+    previousBoardState: snapshot.previousBoardState ? new Map(snapshot.previousBoardState) : null,
+  }));
+  gameUndoIndex = data.gameUndoIndex;
 }
 
 function windowResized() {
@@ -1177,6 +1308,7 @@ function togglePlayMode() {
 
 // Initialize game history with a baseline snapshot (empty board)
 function initGameHistory() {
+  stoneOrder.clear(); // Reset stone order tracking
   previousBoardState = null; // Reset Ko state
   const snapshot = captureGameState('start');
   gameUndoStack = [snapshot];
@@ -1214,6 +1346,21 @@ function drawStones() {
       // Shadow effect
       fill(200, 200, 195, 80);
       circle(v.x + 3, v.y + 3, spacing*0.25);
+    }
+    
+    // Show stone index (move order) if enabled
+    if (showStoneIndices) {
+      const order = stoneOrder.get(vid);
+      if (order !== undefined) {
+        textAlign(CENTER, CENTER);
+        textSize(14);
+        if (color === 'black') {
+          fill(255, 255, 255); // White text on black stone
+        } else {
+          fill(20, 20, 25); // Black text on white stone
+        }
+        text(order, v.x, v.y);
+      }
     }
     
     // Show liberties (chi) on hover
@@ -1269,6 +1416,7 @@ function captureGameState(moveDescription) {
     type: 'game',
     label: moveDescription,
     stones: new Map(gameStones), // Copy of stone placements
+    stoneOrder: new Map(stoneOrder), // Copy of move order
     currentPlayer: currentPlayer,
     capturedBlack: capturedBlack,
     capturedWhite: capturedWhite,
@@ -1280,6 +1428,7 @@ function captureGameState(moveDescription) {
 function restoreGameState(snapshot) {
   if (snapshot.type !== 'game') return;
   gameStones = new Map(snapshot.stones);
+  stoneOrder = new Map(snapshot.stoneOrder || []);
   currentPlayer = snapshot.currentPlayer;
   capturedBlack = snapshot.capturedBlack;
   capturedWhite = snapshot.capturedWhite;
@@ -1372,6 +1521,10 @@ function placeStone(vid) {
   // Save the board state from BEFORE this move for Ko detection
   // (so next move can't recreate this pre-move state)
   previousBoardState = boardBeforeThisMove;
+  
+  // Record move order (count existing stones + 1)
+  const moveOrder = gameStones.size;
+  stoneOrder.set(vid, moveOrder);
   
   // Switch player (the next player to move)
   currentPlayer = opponent;
@@ -1562,6 +1715,65 @@ function saveGoban() {
   if (saveLoadStatusEl) saveLoadStatusEl.textContent = `Saved ${fname}`;
 }
 
+function startLoadGoban() {
+  // Set up editor environment first
+  document.getElementById('menu').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  document.getElementById('presetMenu').style.display = 'none';
+  setDisplay('ui', 'block');
+  setDisplay('uiRandom', 'none');
+  setDisplay('uiEdit', 'block');
+  setDisplay('uiPlay', 'none');
+  currentScreen = 'editor';
+  
+  if (!canvasCreated) {
+    ensureCanvas();
+  }
+  
+  // Now open file picker
+  const picker = createFileInput(handleFile, false);
+  picker.elt.accept = 'application/json';
+  picker.elt.click();
+
+  function handleFile(file) {
+    if (file?.type === 'application' && file.subtype === 'json') {
+      const data = file.data || file.string;
+      try {
+        const json = typeof data === 'string' ? JSON.parse(data) : data;
+        
+        // Check if it's a game save or just a goban save
+        if (json.type === 'game') {
+          // Load as game
+          restoreGoban(json);
+          restoreGameFromData(json);
+          mode = 'play';
+          currentScreen = 'play';
+          setDisplay('uiEdit', 'none');
+          setDisplay('uiPlay', 'block');
+          setupPlayButtons();
+          updateGameUI();
+          if (saveLoadStatusEl) saveLoadStatusEl.textContent = 'Game loaded';
+        } else {
+          // Load as goban only
+          restoreGoban(json);
+          if (saveLoadStatusEl) saveLoadStatusEl.textContent = 'Goban loaded';
+          
+          // Initialize editor UI after loading
+          mode = 'move-vertex';
+          captureState('initial');
+          updateUiCounts();
+          setupEditorButtons();
+        }
+        redraw();
+      } catch (e) {
+        console.error('Failed to load file', e);
+        if (saveLoadStatusEl) saveLoadStatusEl.textContent = 'Load failed';
+      }
+    }
+    picker.remove();
+  }
+}
+
 function loadGoban() {
   const picker = createFileInput(handleFile, false);
   picker.elt.accept = 'application/json';
@@ -1572,8 +1784,31 @@ function loadGoban() {
       const data = file.data || file.string;
       try {
         const json = typeof data === 'string' ? JSON.parse(data) : data;
-        restoreGoban(json);
-        if (saveLoadStatusEl) saveLoadStatusEl.textContent = 'Loaded goban';
+        
+        // Check if it's a game save or just a goban save
+        if (json.type === 'game') {
+          // Load as game
+          restoreGoban(json);
+          restoreGameFromData(json);
+          mode = 'play';
+          currentScreen = 'play';
+          setDisplay('uiEdit', 'none');
+          setDisplay('uiPlay', 'block');
+          setupPlayButtons();
+          updateGameUI();
+          if (saveLoadStatusEl) saveLoadStatusEl.textContent = 'Game loaded';
+        } else {
+          // Load as goban only
+          restoreGoban(json);
+          if (saveLoadStatusEl) saveLoadStatusEl.textContent = 'Loaded goban';
+          
+          // Initialize editor UI after loading
+          mode = 'move-vertex';
+          captureState('initial');
+          updateUiCounts();
+          setupEditorButtons();
+        }
+        redraw();
       } catch (e) {
         console.error('Failed to load goban', e);
         if (saveLoadStatusEl) saveLoadStatusEl.textContent = 'Load failed';
