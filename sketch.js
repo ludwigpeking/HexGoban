@@ -26,6 +26,11 @@ let capturedBlack = 0;
 let capturedWhite = 0;
 let previousBoardState = null; // For Ko rule - stores the board state after the last move
 let showStoneIndices = false; // Toggle stone indices display
+let lastMoveWasPass = false; // Track if previous move was a pass
+let gameEnded = false; // True when both players pass consecutively
+let deadStones = new Set(); // Set of vertex IDs marked as dead
+let markingDeadStones = false; // True when in dead stone marking mode
+const KOMI = 7.5; // Komi compensation for White
 
 let relaxing = false;
 let relaxFrame = 0;
@@ -233,10 +238,54 @@ function loadPresetGoban(presetName) {
 
   ensureCanvas();
 
-  // TODO: Load preset from file
-  // For now, create a placeholder
-  alert(`Loading preset "${presetName}" - file loading not yet implemented`);
-  showMainMenu();
+  // Map preset names to their JSON files
+  const presetFiles = {
+    'shumi': 'gobans/Shumi.json',
+    'shumi_large': 'gobans/Shumi_Large.json',
+    'kimon': 'gobans/Kimon.json',
+    'jingan': 'gobans/Jin-gan_relaxed.json',
+    'yugen': 'gobans/Yuken_relaxed.json',
+    'hoshikage': 'gobans/Hoshikage_relaxed.json',
+    'hoshikuzu': 'gobans/Hoshikuzu_relaxed.json',
+    'enten': 'gobans/Enten_relaxed.json',
+  };
+
+  const filePath = presetFiles[presetName];
+  if (!filePath) {
+    alert(`Preset "${presetName}" not found`);
+    showMainMenu();
+    return;
+  }
+
+  // Load the goban from JSON file
+  fetch(filePath)
+    .then(response => {
+      if (!response.ok) throw new Error(`Failed to load ${filePath}`);
+      return response.json();
+    })
+    .then(data => {
+      restoreGoban(data);
+      // Center and fit the loaded goban to canvas
+      centerAndFitGoban();
+      // Start play mode immediately
+      mode = 'play';
+      gameStones.clear();
+      currentPlayer = 'black';
+      capturedBlack = 0;
+      capturedWhite = 0;
+      initGameHistory();
+      setDisplay('ui', 'block');
+      setDisplay('uiRandom', 'none');
+      setDisplay('uiEdit', 'none');
+      setDisplay('uiPlay', 'block');
+      setupPlayButtons();
+      updateGameUI();
+      redraw();
+    })
+    .catch(err => {
+      alert(`Error loading preset: ${err.message}`);
+      showMainMenu();
+    });
 }
 
 function showSettings() {
@@ -331,6 +380,9 @@ function setupPlayButtons() {
   const saveGameBtn = document.getElementById('saveGameBtn');
   const loadGameBtn = document.getElementById('loadGameBtn');
   const toggleIndicesBtn = document.getElementById('toggleIndicesBtn');
+  const scoreBtn = document.getElementById('scoreBtn');
+  const passBtn = document.getElementById('passBtn');
+  const finishMarkingBtn = document.getElementById('finishMarkingBtn');
 
   if (undoBtn) undoBtn.onclick = undoStep;
   if (redoBtn) redoBtn.onclick = redoStep;
@@ -344,6 +396,18 @@ function setupPlayButtons() {
       showStoneIndices = !showStoneIndices;
       toggleIndicesBtn.textContent = showStoneIndices ? 'Hide Stone Indices' : 'Show Stone Indices';
       redraw();
+    };
+  }
+  if (passBtn) {
+    passBtn.onclick = handlePass;
+  }
+  if (finishMarkingBtn) {
+    finishMarkingBtn.onclick = finishMarkingDeadStones;
+  }
+  if (scoreBtn) {
+    scoreBtn.onclick = () => {
+      const score = computeTrompTaylorScore();
+      renderScore(score);
     };
   }
 
@@ -673,7 +737,11 @@ function mousePressed() {
     return;
   }
   if (mode === 'play' && hoverVertex !== null) {
-    placeStone(hoverVertex);
+    if (markingDeadStones) {
+      toggleDeadStone(hoverVertex);
+    } else {
+      placeStone(hoverVertex);
+    }
     redraw();
     return;
   }
@@ -697,6 +765,57 @@ function mouseReleased() {
     window.dragStateCapture = false;
   }
   dragging = null;
+}
+
+function handlePass() {
+  if (gameEnded || markingDeadStones) return;
+  
+  if (lastMoveWasPass) {
+    // Two consecutive passes - game ends
+    gameEnded = true;
+    markingDeadStones = true;
+    document.getElementById('gameStatusRow').style.display = 'block';
+    document.getElementById('gameStatus').textContent = 'Game ended. Mark dead stones.';
+    document.getElementById('deadStoneRow').style.display = 'block';
+    console.log('Game ended - both players passed. Mark dead stones.');
+  } else {
+    lastMoveWasPass = true;
+    currentPlayer = currentPlayer === 'black' ? 'white' : 'black';
+    updateGameUI();
+    console.log(`${currentPlayer === 'white' ? 'Black' : 'White'} passed.`);
+  }
+}
+
+function toggleDeadStone(vid) {
+  if (!gameStones.has(vid)) return;
+  
+  const group = getGroup(vid);
+  const allDead = Array.from(group).every(v => deadStones.has(v));
+  
+  if (allDead) {
+    // Unmark as dead
+    for (const v of group) {
+      deadStones.delete(v);
+    }
+  } else {
+    // Mark as dead
+    for (const v of group) {
+      deadStones.add(v);
+    }
+  }
+  
+  redraw();
+}
+
+function finishMarkingDeadStones() {
+  markingDeadStones = false;
+  document.getElementById('deadStoneRow').style.display = 'none';
+  document.getElementById('gameStatusRow').style.display = 'none';
+  
+  // Automatically compute and display final score
+  const score = computeTrompTaylorScore();
+  renderScore(score);
+  redraw();
 }
 
 function keyPressed() {
@@ -909,14 +1028,6 @@ function drawGobanBorder() {
   vertex(corners[0].outerX, corners[0].outerY); // close loop
   endShape(CLOSE);
   
-  // DEBUG: Draw red circles on corner vertices
-  noFill();
-  stroke(255, 0, 0);
-  strokeWeight(3);
-  cornerPoints.forEach(v => {
-    circle(v.x, v.y, 12);
-  });
-  
   pop();
 }
 
@@ -1037,6 +1148,9 @@ function drawEdges() {
 }
 
 function drawVertices() {
+  // Skip drawing vertex circles in play mode
+  if (mode === 'play') return;
+  
   noStroke();
   for (const v of vertices) {
     if (v.visible === false) continue; // hide unused vertices
@@ -1259,7 +1373,7 @@ function drawSymbols() {
       if (whi) {
         push();
         imageMode(CENTER);
-        image(whi, v.x, v.y, edgeCount*4, edgeCount*4);
+        image(whi, v.x, v.y, edgeCount*15, edgeCount*15);
         pop();
       } else {
         fill(255);
@@ -1272,7 +1386,7 @@ function drawSymbols() {
       if (bhi) {
         push();
         imageMode(CENTER);
-        image(bhi, v.x, v.y, edgeCount*4, edgeCount*4);
+        image(bhi, v.x, v.y, edgeCount*15, edgeCount*15);
         pop();
       } else {
         fill(20);
@@ -1310,6 +1424,19 @@ function togglePlayMode() {
 function initGameHistory() {
   stoneOrder.clear(); // Reset stone order tracking
   previousBoardState = null; // Reset Ko state
+  lastMoveWasPass = false; // Reset pass tracking
+  gameEnded = false; // Reset game ended flag
+  deadStones.clear(); // Reset dead stones
+  markingDeadStones = false; // Reset marking mode
+  
+  // Hide game status UI elements
+  const gameStatusRow = document.getElementById('gameStatusRow');
+  const deadStoneRow = document.getElementById('deadStoneRow');
+  const resultRow = document.getElementById('resultRow');
+  if (gameStatusRow) gameStatusRow.style.display = 'none';
+  if (deadStoneRow) deadStoneRow.style.display = 'none';
+  if (resultRow) resultRow.style.display = 'none';
+  
   const snapshot = captureGameState('start');
   gameUndoStack = [snapshot];
   gameUndoIndex = 0;
@@ -1334,22 +1461,42 @@ function drawStones() {
     
     // Draw stone
     noStroke();
+    const isDead = deadStones.has(vid);
+    
     if (color === 'black') {
-      fill(20, 20, 25);
+      if (isDead) {
+        fill(20, 20, 25, 100); // Faded for dead stones
+      } else {
+        fill(20, 20, 25);
+      }
       circle(v.x, v.y, spacing*0.65);
       // Shine effect
-      fill(80, 80, 90, 120);
+      fill(80, 80, 90, isDead ? 60 : 120);
       circle(v.x - 4, v.y - 4, spacing*0.25);
     } else {
-      fill(250, 250, 245);
+      if (isDead) {
+        fill(250, 250, 245, 100); // Faded for dead stones
+      } else {
+        fill(250, 250, 245);
+      }
       circle(v.x, v.y, spacing*0.65);
       // Shadow effect
-      fill(200, 200, 195, 80);
+      fill(200, 200, 195, isDead ? 40 : 80);
       circle(v.x + 3, v.y + 3, spacing*0.25);
     }
     
+    // Draw X on dead stones
+    if (isDead) {
+      stroke(255, 100, 100);
+      strokeWeight(3);
+      const size = 10;
+      line(v.x - size, v.y - size, v.x + size, v.y + size);
+      line(v.x + size, v.y - size, v.x - size, v.y + size);
+      noStroke();
+    }
+    
     // Show stone index (move order) if enabled
-    if (showStoneIndices) {
+    if (showStoneIndices && !isDead) {
       const order = stoneOrder.get(vid);
       if (order !== undefined) {
         textAlign(CENTER, CENTER);
@@ -1526,6 +1673,9 @@ function placeStone(vid) {
   const moveOrder = gameStones.size;
   stoneOrder.set(vid, moveOrder);
   
+  // Reset pass tracking since a stone was played
+  lastMoveWasPass = false;
+  
   // Switch player (the next player to move)
   currentPlayer = opponent;
   
@@ -1661,6 +1811,62 @@ function scaleGridByFactor(factor) {
     const dy = v.y - centerY;
     v.x = centerX + dx * factor;
     v.y = centerY + dy * factor;
+  }
+  
+  // Update edge midpoints
+  for (const e of edges) {
+    if (!e.active) continue;
+    const a = vertices[e.a];
+    const b = vertices[e.b];
+    e.mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  }
+}
+
+function centerAndFitGoban() {
+  // Find bounding box of all visible vertices
+  const visibleVerts = vertices.filter(v => v.visible !== false);
+  if (visibleVerts.length === 0) return;
+  
+  let minX = Infinity, maxX = -Infinity;
+  let minY = Infinity, maxY = -Infinity;
+  
+  for (const v of visibleVerts) {
+    minX = Math.min(minX, v.x);
+    maxX = Math.max(maxX, v.x);
+    minY = Math.min(minY, v.y);
+    maxY = Math.max(maxY, v.y);
+  }
+  
+  // Calculate current center and size
+  const currentCenterX = (minX + maxX) / 2;
+  const currentCenterY = (minY + maxY) / 2;
+  const currentWidth = maxX - minX;
+  const currentHeight = maxY - minY;
+  
+  // Calculate target center (canvas center)
+  const targetCenterX = width / 2;
+  const targetCenterY = height / 2;
+  
+  // Calculate offset to center the goban
+  const offsetX = targetCenterX - currentCenterX;
+  const offsetY = targetCenterY - currentCenterY;
+  
+  // Apply translation
+  for (const v of vertices) {
+    v.x += offsetX;
+    v.y += offsetY;
+  }
+  
+  // Calculate scale to fit with some margin (90% of canvas)
+  const availableWidth = width * 0.9;
+  const availableHeight = height * 0.9;
+  const scaleX = availableWidth / currentWidth;
+  const scaleY = availableHeight / currentHeight;
+  const scale = Math.min(scaleX, scaleY, 1.0); // Don't scale up, only down if needed
+  
+  // Apply scaling from center
+  if (scale < 1.0) {
+    scaleGridByFactor(scale);
   }
   
   // Update edge midpoints
@@ -2428,4 +2634,106 @@ function relaxVertexPosition(vertex, strength = 0.08) {
         vertex.x += (weightedSumX / totalWeight - vertex.x) * strength;
         vertex.y += (weightedSumY / totalWeight - vertex.y) * strength;
     }
+}
+
+// Tromp-Taylor area scoring
+function computeTrompTaylorScore() {
+  let blackStones = 0;
+  let whiteStones = 0;
+  
+  // Count stones, excluding dead stones
+  for (const [vid, color] of gameStones.entries()) {
+    if (deadStones.has(vid)) continue; // Skip dead stones
+    if (color === 'black') blackStones++;
+    else whiteStones++;
+  }
+
+  let blackTerritory = 0;
+  let whiteTerritory = 0;
+  let neutral = 0;
+
+  const visited = new Set();
+
+  for (const v of vertices) {
+    if (v.visible === false) continue;
+    const vid = v.id;
+    // Treat dead stones as empty for territory calculation
+    const hasLiveStone = gameStones.has(vid) && !deadStones.has(vid);
+    if (hasLiveStone || visited.has(vid)) continue;
+
+    // Flood fill empty region
+    let regionSize = 0;
+    const queue = [vid];
+    visited.add(vid);
+    const borderingColors = new Set();
+
+    while (queue.length) {
+      const curr = queue.pop();
+      regionSize++;
+      const cv = vertices[curr];
+      for (const nid of cv.neighbors) {
+        const nv = vertices[nid];
+        if (!nv || nv.visible === false) continue;
+        const hasLiveNeighbor = gameStones.has(nid) && !deadStones.has(nid);
+        if (hasLiveNeighbor) {
+          borderingColors.add(gameStones.get(nid));
+        } else if (!visited.has(nid)) {
+          visited.add(nid);
+          queue.push(nid);
+        }
+      }
+    }
+
+    if (borderingColors.size === 1) {
+      const owner = borderingColors.has('black') ? 'black' : 'white';
+      if (owner === 'black') blackTerritory += regionSize;
+      else whiteTerritory += regionSize;
+    } else {
+      neutral += regionSize;
+    }
+  }
+
+  const blackTotal = blackStones + blackTerritory;
+  const whiteTotal = whiteStones + whiteTerritory + KOMI; // Add komi to white
+
+  return {
+    blackStones,
+    whiteStones,
+    blackTerritory,
+    whiteTerritory,
+    neutral,
+    blackTotal,
+    whiteTotal,
+    komi: KOMI,
+  };
+}
+
+function renderScore(score) {
+  const bEl = document.getElementById('scoreBlack');
+  const wEl = document.getElementById('scoreWhite');
+  const nEl = document.getElementById('scoreNeutral');
+  const resultEl = document.getElementById('gameResult');
+  const resultRow = document.getElementById('resultRow');
+  
+  if (bEl) bEl.textContent = `${score.blackTotal} (stones ${score.blackStones} + territory ${score.blackTerritory})`;
+  if (wEl) wEl.textContent = `${score.whiteTotal} (stones ${score.whiteStones} + territory ${score.whiteTerritory} + komi ${score.komi})`;
+  if (nEl) nEl.textContent = `${score.neutral}`;
+  
+  // Display winner prominently
+  if (resultEl && resultRow) {
+    const diff = Math.abs(score.blackTotal - score.whiteTotal);
+    if (score.blackTotal > score.whiteTotal) {
+      resultEl.textContent = `🏆 BLACK WINS by ${diff.toFixed(1)} points!`;
+      resultEl.style.color = '#ffffff';
+      resultEl.style.textShadow = '2px 2px 4px rgba(0,0,0,0.8)';
+    } else if (score.whiteTotal > score.blackTotal) {
+      resultEl.textContent = `🏆 WHITE WINS by ${diff.toFixed(1)} points!`;
+      resultEl.style.color = '#ffffff';
+      resultEl.style.textShadow = '2px 2px 4px rgba(0,0,0,0.8)';
+    } else {
+      resultEl.textContent = `TIE GAME!`;
+      resultEl.style.color = '#ffdd00';
+    }
+    resultRow.style.display = 'block';
+  }
 }
