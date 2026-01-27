@@ -690,9 +690,11 @@ function neighborId(v, coordToId, delta) {
 }
 
 // ---- Geometry helpers ----
-// axialToPixel now uses common.js version with parameters
 function axialToPixel(q, r) {
-  return window.axialToPixel(q, r, spacing, width / 2, height / 2);
+  const sqrt3 = Math.sqrt(3);
+  const x = spacing * q + spacing / 2 * r + width / 2;
+  const y = spacing * sqrt3 / 2 * r + height / 2;
+  return { x, y };
 }
 
 function rotateAxial120(q, r) {
