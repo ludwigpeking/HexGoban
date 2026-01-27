@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hexagonal Goban - Print Version</title>
+  <script src="p5.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #333;
+      overflow-x: hidden;
+    }
+
+    #container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    header {
+      text-align: center;
+      padding: 30px 0;
+      color: white;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+    }
+
+    h1 {
+      font-size: 2.5em;
+      margin-bottom: 10px;
+    }
+
+    .subtitle {
+      font-size: 1.2em;
+      opacity: 0.9;
+    }
+
+    #controls {
+      background: white;
+      border-radius: 15px;
+      padding: 30px;
+      margin-bottom: 20px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+    }
+
+    #status {
+      padding: 15px;
+      margin-bottom: 20px;
+      background: #f0f0f0;
+      border-radius: 8px;
+      text-align: center;
+      font-weight: 600;
+      color: #555;
+    }
+
+    .info-box {
+      background: #e8f4f8;
+      border-left: 4px solid #2196F3;
+      padding: 15px;
+      margin-bottom: 20px;
+      border-radius: 4px;
+    }
+
+    .info-box h3 {
+      margin: 0 0 10px 0;
+      color: #1976D2;
+    }
+
+    .info-box ul {
+      margin-left: 20px;
+      color: #555;
+    }
+
+    .preset-section {
+      margin-bottom: 30px;
+    }
+
+    .preset-section h2 {
+      margin-bottom: 15px;
+      color: #444;
+      border-bottom: 2px solid #667eea;
+      padding-bottom: 10px;
+    }
+
+    .preset-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+
+    .preset-btn {
+      padding: 15px 20px;
+      font-size: 16px;
+      border: 2px solid #667eea;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      font-weight: 600;
+      box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+    }
+
+    .preset-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+    }
+
+    .preset-btn:active {
+      transform: translateY(0);
+    }
+
+    .download-section {
+      text-align: center;
+      padding: 20px;
+      background: #f9f9f9;
+      border-radius: 10px;
+    }
+
+    #currentGoban {
+      display: inline-block;
+      font-size: 1.3em;
+      font-weight: bold;
+      color: #667eea;
+      margin-bottom: 15px;
+    }
+
+    #downloadBtn {
+      padding: 15px 40px;
+      font-size: 18px;
+      border: none;
+      background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+      color: white;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: bold;
+      box-shadow: 0 4px 15px rgba(17, 153, 142, 0.4);
+      transition: all 0.3s ease;
+    }
+
+    #downloadBtn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(17, 153, 142, 0.6);
+    }
+
+    #downloadBtn:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    #canvasContainer {
+      background: white;
+      border-radius: 15px;
+      padding: 20px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+      overflow: auto;
+      max-height: 80vh;
+    }
+
+    canvas {
+      display: block;
+      margin: 0 auto;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+    }
+
+    footer {
+      text-align: center;
+      padding: 30px;
+      color: white;
+      opacity: 0.8;
+      margin-top: 40px;
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <header>
+      <h1>🖨️ Hexagonal Goban - Print Version</h1>
+      <div class="subtitle">High-Resolution Print Output (200 PPI, 3cm vertex spacing)</div>
+    </header>
+
+    <div id="controls">
+      <div id="status">Ready to load goban</div>
+
+      <div class="info-box">
+        <h3>📐 Print Specifications</h3>
+        <ul>
+          <li><strong>Resolution:</strong> 200 PPI (pixels per inch)</li>
+          <li><strong>Vertex Spacing:</strong> 3 cm = 236 pixels</li>
+          <li><strong>Canvas Size:</strong> A4 equivalent (1654 × 2339 pixels)</li>
+          <li><strong>Scale Factor:</strong> 6× larger than screen version</li>
+          <li><strong>Line Weight:</strong> 12 pixels (2mm at print size)</li>
+        </ul>
+      </div>
+
+      <div class="preset-section">
+        <h2>Select a Preset Goban</h2>
+        <div class="preset-grid">
+          <button class="preset-btn" data-preset="shumi">須弥<br>Shumi</button>
+          <button class="preset-btn" data-preset="shumi_large">須弥大<br>Shumi Large</button>
+          <button class="preset-btn" data-preset="yugen">幽玄<br>Yugen</button>
+          <button class="preset-btn" data-preset="hoshikage">星影<br>Hoshikage</button>
+          <button class="preset-btn" data-preset="hoshikuzu">星屑<br>Hoshikuzu</button>
+          <button class="preset-btn" data-preset="enten">演天<br>Enten</button>
+          <button class="preset-btn" data-preset="kimon">奇门<br>Kimon</button>
+          <button class="preset-btn" data-preset="jingan">陣眼<br>Jin-gan</button>
+        </div>
+      </div>
+
+      <div class="download-section">
+        <div>Currently Loaded: <span id="currentGoban">None</span></div>
+        <button id="downloadBtn">📥 Download High-Res PNG</button>
+      </div>
+    </div>
+
+    <div id="canvasContainer">
+      <main id="app"></main>
+    </div>
+
+    <footer>
+      <p>星旋圍碁 VorteGo - Print Version</p>
+      <p>© 2026 Richard Qian Li. All rights reserved.</p>
+    </footer>
+  </div>
+
+  <!-- Load scripts in correct order -->
+  <script src="common.js"></script>
+  <script src="print_sketch.js"></script>
+</body>
+</html>

@@ -3,7 +3,7 @@
 
 const spacing = 50;
 let hexRadius = 10; // yields 9 vertices per edge (can be changed for random generation)
-const sqrt3 = Math.sqrt(3);
+// sqrt3 is defined in common.js
 
 let vertices = []; // {id,x,y,type,q,r,neighbors:Set,triangles:Set,quads:Set,peers:number[]}
 let edges = [];    // {id,a,b,mid:{x,y},active:true}
@@ -30,7 +30,6 @@ let lastMoveWasPass = false; // Track if previous move was a pass
 let gameEnded = false; // True when both players pass consecutively
 let deadStones = new Set(); // Set of vertex IDs marked as dead
 let markingDeadStones = false; // True when in dead stone marking mode
-const KOMI = 7.5; // Komi compensation for White
 
 let relaxing = false;
 let relaxFrame = 0;
@@ -86,10 +85,7 @@ let gobanUndoIndex = -1;
 let gameUndoStack = [];   // For stone placement/captures in play mode
 let gameUndoIndex = -1;
 
-const dirAxial = [
-  [1, 0], [0, 1], [-1, 1],
-  [-1, 0], [0, -1], [1, -1],
-];
+// dirAxial is defined in common.js
 
 function setup() {
   // Don't create canvas yet - wait for menu selection
@@ -694,10 +690,9 @@ function neighborId(v, coordToId, delta) {
 }
 
 // ---- Geometry helpers ----
+// axialToPixel now uses common.js version with parameters
 function axialToPixel(q, r) {
-  const x = width / 2 + spacing * (q + r * 0.5);
-  const y = height / 2 + spacing * (r * (sqrt3 / 2));
-  return { x, y };
+  return window.axialToPixel(q, r, spacing, width / 2, height / 2);
 }
 
 function rotateAxial120(q, r) {
@@ -928,18 +923,15 @@ function deleteEdgeSingle(edgeId) {
   if (!edge?.active) return;
   const k = edgeKey(edge.a, edge.b);
   const tris = (edgeTris.get(k) || []).filter((t) => triangles[t]?.active);
-  if (tris.length !== 2) return; // cannot merge
+  if (tris.length !== 2) return;
   const [t0, t1] = tris.map((tid) => triangles[tid]);
   const other0 = t0.verts.find((v) => v !== edge.a && v !== edge.b);
   const other1 = t1.verts.find((v) => v !== edge.a && v !== edge.b);
-  // Deactivate edge and triangles
   edge.active = false;
   deactivateTriangle(t0.id);
   deactivateTriangle(t1.id);
-  // Drop neighbor relation for the missing edge
   vertices[edge.a].neighbors.delete(edge.b);
   vertices[edge.b].neighbors.delete(edge.a);
-  // Create quad ordered by angle around centroid
   const vIds = [edge.a, other0, edge.b, other1];
   const ordered = orderPolygon(vIds);
   const qid = quads.length;
@@ -1033,12 +1025,8 @@ function drawGobanBorder() {
 
 function findHexCorners(edgeVertices) {
   // Find the 6 true corner points of the hexagon purely geometrically
-  // These are the vertices most extreme in 6 directions (0°, 60°, 120°, 180°, 240°, 300°)
-  // Use ALL visible vertices, not just marked edge vertices
   const centerX = width / 2;
   const centerY = height / 2;
-  
-  // Use all visible vertices for finding corners
   const allVerts = vertices.filter(v => v.visible !== false);
   
   const angles = [0, 60, 120, 180, 240, 300];
@@ -1049,7 +1037,6 @@ function findHexCorners(edgeVertices) {
     const dirX = Math.cos(rad);
     const dirY = Math.sin(rad);
     
-    // Find the vertex with maximum projection in this direction
     let bestVertex = null;
     let maxProjection = -Infinity;
     
@@ -1240,7 +1227,7 @@ function updateRelaxStatus() {
 
 function relaxVertices(iterations) {
   for (let it = 0; it < iterations; it++) {
-    // Precalculate face areas once per iteration (CRITICAL)
+    // Precalculate face areas once per iteration
     for (const q of quads) {
       if (!q.active) continue;
       q.area = calculateQuadArea(q);
@@ -1837,17 +1824,14 @@ function centerAndFitGoban() {
     maxY = Math.max(maxY, v.y);
   }
   
-  // Calculate current center and size
   const currentCenterX = (minX + maxX) / 2;
   const currentCenterY = (minY + maxY) / 2;
   const currentWidth = maxX - minX;
   const currentHeight = maxY - minY;
   
-  // Calculate target center (canvas center)
   const targetCenterX = width / 2;
   const targetCenterY = height / 2;
   
-  // Calculate offset to center the goban
   const offsetX = targetCenterX - currentCenterX;
   const offsetY = targetCenterY - currentCenterY;
   
@@ -1862,7 +1846,7 @@ function centerAndFitGoban() {
   const availableHeight = height * 0.9;
   const scaleX = availableWidth / currentWidth;
   const scaleY = availableHeight / currentHeight;
-  const scale = Math.min(scaleX, scaleY, 1.0); // Don't scale up, only down if needed
+  const scale = Math.min(scaleX, scaleY, 1.0);
   
   // Apply scaling from center
   if (scale < 1.0) {
@@ -2103,18 +2087,14 @@ function markBorderVertices(borderRadius) {
 }
 
 function findAndMarkBorderVertices() {
-  // Reset all visible vertices to 'inner' first
   for (const v of vertices) {
     if (v.visible) {
       v.type = 'inner';
     }
   }
   
-  // Interior vertices have exactly 6 neighbors
-  // Border vertices have fewer than 6 neighbors
   for (const v of vertices) {
     if (!v.visible) continue;
-    
     const neighborCount = v.neighbors.size;
     if (neighborCount < 6) {
       v.type = 'edge';
@@ -2369,7 +2349,7 @@ function autoRemoveEdgesStep() {
         deleted++;
         merged_tris_fallback.add(triAId).add(triBId);
         
-        if (deleted >= 10) break; // Limit fallback per pass
+        if (deleted >= 10) break;
       }
     }
   }
@@ -2383,7 +2363,6 @@ function shuffleArray(arr) {
     [arr[i], arr[j]] = [arr[j], arr[i]];
   }
 }
-
 
 function updateAutoRemoveStatus() {
   const statusEl = document.getElementById('autoRemoveStatus');
@@ -2623,7 +2602,7 @@ function relaxVertexPosition(vertex, strength = 0.08) {
 
     vertex.adjacentFaces.forEach((face) => {
         let centroid = getFaceCentroid(face);
-        let weight = face.area; // Larger faces "pull" harder
+        let weight = face.area;
 
         weightedSumX += centroid.x * weight;
         weightedSumY += centroid.y * weight;
@@ -2636,14 +2615,12 @@ function relaxVertexPosition(vertex, strength = 0.08) {
     }
 }
 
-// Tromp-Taylor area scoring
 function computeTrompTaylorScore() {
   let blackStones = 0;
   let whiteStones = 0;
   
-  // Count stones, excluding dead stones
   for (const [vid, color] of gameStones.entries()) {
-    if (deadStones.has(vid)) continue; // Skip dead stones
+    if (deadStones.has(vid)) continue;
     if (color === 'black') blackStones++;
     else whiteStones++;
   }
@@ -2657,11 +2634,9 @@ function computeTrompTaylorScore() {
   for (const v of vertices) {
     if (v.visible === false) continue;
     const vid = v.id;
-    // Treat dead stones as empty for territory calculation
     const hasLiveStone = gameStones.has(vid) && !deadStones.has(vid);
     if (hasLiveStone || visited.has(vid)) continue;
 
-    // Flood fill empty region
     let regionSize = 0;
     const queue = [vid];
     visited.add(vid);
@@ -2693,8 +2668,9 @@ function computeTrompTaylorScore() {
     }
   }
 
+  const KOMI = 7.5;
   const blackTotal = blackStones + blackTerritory;
-  const whiteTotal = whiteStones + whiteTerritory + KOMI; // Add komi to white
+  const whiteTotal = whiteStones + whiteTerritory + KOMI;
 
   return {
     blackStones,
